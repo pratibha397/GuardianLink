@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, LiveServerMessage, Modality, Blob, FunctionDeclaration, Type } from '@google/genai';
+import { Blob, FunctionDeclaration, GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
 
 function decode(base64: string) {
   const binaryString = atob(base64);
@@ -92,7 +92,7 @@ export class GeminiVoiceMonitor {
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.toolCall) {
-              for (const fc of message.toolCall.functionCalls) {
+              for (const fc of message.toolCall?.functionCalls) {
                 if (fc.name === 'triggerEmergencyAlert') {
                   // Fix: Explicitly cast unknown argument to string to match onAlert parameter type.
                   const detectedPhrase = (fc.args as any).detectedPhrase as string;
