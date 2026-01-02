@@ -74,8 +74,14 @@ export class GeminiVoiceMonitor {
 
   async start() {
     try {
-      // Corrected: Always use process.env.API_KEY directly for initialization.
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // Accessing the injected variable from vite.config.ts
+      const apiKey = process.env.API_KEY;
+      
+      if (!apiKey || apiKey === '') {
+        throw new Error('API Key is missing. Please ensure you have added "API_KEY" to your Environment Variables on Vercel.');
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
 
       this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
@@ -94,7 +100,6 @@ export class GeminiVoiceMonitor {
             if (message.toolCall) {
               for (const fc of message.toolCall?.functionCalls) {
                 if (fc.name === 'triggerEmergencyAlert') {
-                  // Fix: Explicitly cast unknown argument to string to match onAlert parameter type.
                   const detectedPhrase = (fc.args as any).detectedPhrase as string;
                   this.options.onAlert(detectedPhrase);
                   this.sessionPromise?.then(session => {
@@ -140,7 +145,7 @@ export class GeminiVoiceMonitor {
           },
           onerror: (e: any) => {
             console.error('Gemini Voice Monitor Error:', e);
-            this.options.onError('Voice monitoring error. Please restart.');
+            this.options.onError('Connection error. Verify your API key is active and has billing attached.');
           },
           onclose: () => {}
         },
@@ -149,15 +154,13 @@ export class GeminiVoiceMonitor {
           tools: [{ functionDeclarations: [triggerAlertFunction] }],
           systemInstruction: `You are a real-time safety monitor. 
           LISTEN CONTINUOUSLY for the trigger phrase: "${this.options.triggerPhrase}". 
-          When you hear "${this.options.triggerPhrase}" or anything very similar (like someone screaming it), 
-          call triggerEmergencyAlert IMMEDIATELY. 
-          Do not ask for confirmation. Do not talk back unless absolutely necessary to confirm safety. 
-          Prioritize speed over everything else. Stay silent otherwise.`,
+          When you hear it, call triggerEmergencyAlert IMMEDIATELY. 
+          Stay silent otherwise.`,
         }
       });
     } catch (err: any) {
       console.error('Failed to start Gemini monitor:', err);
-      this.options.onError(err.message || 'Microphone access denied.');
+      this.options.onError(err.message || 'Check your internet connection and API Key.');
     }
   }
 
@@ -192,8 +195,8 @@ export class GeminiVoiceMonitor {
   async stop() {
     if (this.scriptProcessor) this.scriptProcessor.disconnect();
     if (this.stream) this.stream.getTracks().forEach(track => track.stop());
-    if (this.inputAudioContext) await this.inputAudioContext.close();
-    if (this.outputAudioContext) await this.outputAudioContext.close();
+    if (this.inputAudioContext && this.inputAudioContext.state !== 'closed') await this.inputAudioContext.close();
+    if (this.outputAudioContext && this.outputAudioContext.state !== 'closed') await this.outputAudioContext.close();
     
     this.sessionPromise?.then(session => session.close());
     this.sessionPromise = null;
