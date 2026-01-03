@@ -1,8 +1,16 @@
-
 export interface User {
   id: string;
   phone: string;
   name: string;
+}
+
+export interface GuardianCoords {
+  lat: number;
+  lng: number;
+  accuracy: number;
+  speed: number | null;
+  heading: number | null;
+  timestamp: number;
 }
 
 export interface EmergencyContact {

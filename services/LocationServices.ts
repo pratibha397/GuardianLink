@@ -1,25 +1,15 @@
+import { GuardianCoords } from '../types';
+
 /**
  * High-performance Location Service for GuardianVoice.
  * Optimized for emergency tracking with high accuracy.
  */
 
-export interface Coordinates {
-  lat: number;
-  lng: number;
-  accuracy: number;
-  speed: number | null;
-  heading: number | null;
-  timestamp: number;
-}
-
-export type LocationSuccessCallback = (coords: Coordinates) => void;
+export type LocationSuccessCallback = (coords: GuardianCoords) => void;
 export type LocationErrorCallback = (message: string) => void;
 
 /**
  * Starts watching the user's location with high accuracy.
- * @param onUpdate - Callback triggered on location change.
- * @param onError - Callback triggered on GPS failure.
- * @returns watchId - ID for clearing the watch.
  */
 export function startLocationWatch(
   onUpdate: LocationSuccessCallback,
@@ -70,7 +60,6 @@ export function startLocationWatch(
 
 /**
  * Stops an active location watch.
- * @param watchId - The ID returned by startLocationWatch.
  */
 export function stopLocationWatch(watchId: number): void {
   if (watchId !== -1) {
