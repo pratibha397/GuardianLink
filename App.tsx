@@ -28,7 +28,7 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isEmergency, setIsEmergency] = useState(false);
 
-  // Safely check for configuration
+  // Check for basic configuration
   const isConfigured = !!(
     typeof process !== 'undefined' && 
     process.env.API_KEY && 
@@ -53,8 +53,8 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="font-bold text-lg tracking-tight italic leading-none">AEGIS</h1>
-            <p className="text-[8px] mono text-slate-500 uppercase font-bold tracking-[0.3em] mt-1">
-              {isConfigured ? 'Mesh Secure' : 'Demo Mode (Keys Missing)'}
+            <p className="text-[8px] mono text-slate-500 uppercase font-bold tracking-[0.3em] mt-1 italic">
+              {isConfigured ? 'Satellite Free Tier' : 'Offline Demo'}
             </p>
           </div>
         </div>
@@ -64,7 +64,7 @@ const App: React.FC = () => {
       </header>
 
       {!isConfigured && (
-        <div className="mx-6 mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3">
+        <div className="mx-6 mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3 animate-pulse">
           <AlertTriangle size={14} className="text-amber-500 shrink-0" />
           <p className="text-[9px] font-black uppercase text-amber-500 tracking-wider">
             Add API Keys to activate AI & Satellite Mesh
@@ -83,7 +83,9 @@ const App: React.FC = () => {
           />
         )}
         {appView === AppView.MESH && <AlertHistory user={user} logs={[]} clearLogs={() => {}} />}
-        {appView === AppView.SETTINGS && <SettingsPanel settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} />}
+        {appView === AppView.SETTINGS && (
+          <SettingsPanel settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} />
+        )}
       </main>
 
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] via-[#020617] to-transparent z-50">
