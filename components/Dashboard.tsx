@@ -46,8 +46,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
   useEffect(() => {
     if (settings.isListening || isEmergency) {
+      setErrorMsg(null); // Clear previous errors when starting
       watchIdRef.current = startLocationWatch(
-        (c: GuardianCoords) => setCoords(c),
+        (c: GuardianCoords) => {
+          setCoords(c);
+          setErrorMsg(null);
+        },
         (err: string) => setErrorMsg(err)
       );
     } else {
@@ -131,7 +135,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
   const findSafeSpots = async () => {
     if (!coords) {
-      setErrorMsg("Waiting for GPS lock.");
+      setErrorMsg("GPS lock required for scanning.");
       return;
     }
     setIsSearching(true);
@@ -185,9 +189,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       </div>
 
       {errorMsg && (
-        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3">
-          <AlertCircle className="text-red-500 shrink-0 mt-0.5" size={16} />
-          <p className="text-[11px] text-red-400 font-bold uppercase tracking-tight">{errorMsg}</p>
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-start gap-3 animate-pulse">
+          <AlertCircle className="text-amber-500 shrink-0 mt-0.5" size={16} />
+          <p className="text-[11px] text-amber-500 font-bold uppercase tracking-tight">{errorMsg}</p>
         </div>
       )}
 
@@ -262,8 +266,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
       <div className="px-6 py-4 flex items-center justify-between mono text-[10px] text-slate-600 bg-slate-900/50 rounded-full border border-white/5">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${coords ? 'bg-green-500 animate-pulse' : 'bg-slate-800'}`} />
-          <span>{coords ? 'LIVE GPS LOCK' : 'SIGNAL SEARCH'}</span>
+          <div className={`w-2 h-2 rounded-full ${coords ? 'bg-green-500 animate-pulse' : (settings.isListening ? 'bg-amber-500 animate-pulse' : 'bg-slate-800')}`} />
+          <span className="uppercase font-bold tracking-tighter">
+            {coords ? 'LIVE GPS LOCK' : (settings.isListening ? 'SEARCHING SIGNAL' : 'OFFLINE')}
+          </span>
         </div>
         <span className="font-bold">{coords ? `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}` : '--.----, --.----'}</span>
       </div>

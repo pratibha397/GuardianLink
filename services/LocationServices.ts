@@ -10,10 +10,13 @@ export function startLocationWatch(
     return -1;
   }
 
+  // Optimized for resilience: 
+  // - timeout increased to 30s to give hardware more time
+  // - maximumAge set to 5s to allow for a quick initial fix from cache
   const options: PositionOptions = {
     enableHighAccuracy: true,
-    timeout: 10000,
-    maximumAge: 0
+    timeout: 30000, 
+    maximumAge: 5000
   };
 
   const watchId = navigator.geolocation.watchPosition(
@@ -31,16 +34,30 @@ export function startLocationWatch(
       let msg = "GPS Signal Error";
       switch (error.code) {
         case error.PERMISSION_DENIED:
-          msg = "Permission Denied: Please enable location access.";
+          msg = "Permission Denied: Please enable location access in settings.";
           break;
         case error.POSITION_UNAVAILABLE:
-          msg = "Signal Lost: GPS position unavailable.";
+          msg = "Signal Lost: Trying to re-establish connection...";
           break;
         case error.TIMEOUT:
-          msg = "GPS Timeout: Location request timed out.";
+          msg = "GPS Timeout: Satellite signal is weak. Move near a window or outdoors.";
           break;
       }
       onError(msg);
+      
+      // If we timeout on High Accuracy, try one-shot low accuracy as a fallback
+      if (error.code === error.TIMEOUT) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => onUpdate({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            timestamp: pos.timestamp
+          }),
+          null,
+          { enableHighAccuracy: false, timeout: 10000 }
+        );
+      }
     },
     options
   );
