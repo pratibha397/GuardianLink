@@ -22,8 +22,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
   const monitorRef = useRef<GeminiVoiceMonitor | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const registeredContacts = settings.contacts.filter(c => c.isRegisteredUser);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [activeAlert?.updates]);
 
   // Wake Lock for background persistence
   useEffect(() => {
@@ -45,7 +51,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
     return () => { if (wakeLock) wakeLock.release(); };
   }, [settings.isListening, isEmergency]);
 
-  // Two-way sync: Update activeAlert state with guardian messages
+  // Sync loop for two-way chat updates from guardians
   useEffect(() => {
     if (!isEmergency) {
       setActiveAlert(null);
@@ -56,7 +62,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       const mine = all.find(a => a.senderPhone === user.phone && a.isLive);
       if (mine) setActiveAlert(mine);
     };
-    const interval = setInterval(syncUpdates, 1500);
+    const interval = setInterval(syncUpdates, 1000); // Fast sync for chat feel
     return () => clearInterval(interval);
   }, [isEmergency, user.phone]);
 
@@ -65,7 +71,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
     if (settings.isListening || isEmergency) {
       const geoOptions = {
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: 5000,
         maximumAge: 0 
       };
 
@@ -85,7 +91,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         },
         (err) => {
           console.error("GPS Error:", err);
-          if (err.code === 1) setError("GPS Permission required for live streaming.");
+          if (err.code === 1) setError("GPS Permission is critical for your safety network.");
         },
         geoOptions
       );
@@ -100,7 +106,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
   const triggerAlert = () => {
     if (registeredContacts.length === 0) {
-      setError("No Active Guardians: Add verified guardians in Settings to enable the alert network.");
+      setError("No Guardians Linked: You must add and verify guardians in settings to send an alert.");
       return;
     }
 
@@ -110,7 +116,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       senderName: user.name,
       timestamp: Date.now(),
       location: currentCoords,
-      message: "LIVE ALERT TRIGGERED: Gemini has detected danger phrase. Location mesh active.",
+      message: "EMERGENCY: Voice trigger detected. Automatically broadcasting live GPS coordinates.",
       updates: [],
       isLive: true,
       recipients: registeredContacts.map(c => c.phone)
@@ -164,83 +170,89 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       <div className={`p-4 rounded-[1.5rem] flex items-center justify-between transition-all duration-500 border ${wakeLock ? 'bg-green-500/10 border-green-500/20 text-green-500 shadow-lg' : 'bg-slate-900 border-slate-800 text-slate-600 shadow-inner'}`}>
         <div className="flex items-center gap-3">
           {wakeLock ? <Lock size={14} className="animate-pulse" /> : <Unlock size={14} />}
-          <span className="text-[10px] font-black uppercase tracking-[0.1em]">
-            {wakeLock ? 'Secure Background Link' : 'Standby Mode'}
+          <span className="text-[10px] font-black uppercase tracking-[0.2em]">
+            {wakeLock ? 'Secure Mesh Active' : 'Offline Mode'}
           </span>
         </div>
         <div className="flex items-center gap-2">
            <div className={`w-2 h-2 rounded-full ${currentCoords ? 'bg-blue-500 animate-pulse' : 'bg-slate-700'}`} />
-           <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'GPS Streaming' : 'Locating...'}</span>
+           <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'GPS Streaming' : 'Searching GPS'}</span>
         </div>
       </div>
 
       {!isEmergency ? (
-        <div className={`relative p-14 rounded-[4rem] flex flex-col items-center justify-center transition-all duration-1000 border-2 overflow-hidden ${settings.isListening ? 'bg-blue-600/5 border-blue-500/40 shadow-[0_0_120px_rgba(37,99,235,0.15)]' : 'bg-slate-900 border-slate-800 shadow-2xl'}`}>
+        <div className={`relative p-14 rounded-[4rem] flex flex-col items-center justify-center transition-all duration-1000 border-2 overflow-hidden ${settings.isListening ? 'bg-blue-600/5 border-blue-500/40 shadow-[0_0_150px_rgba(37,99,235,0.2)]' : 'bg-slate-900 border-slate-800 shadow-2xl'}`}>
           {settings.isListening && (
              <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-blue-500/5 rounded-full animate-ping [animation-duration:3s]" />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[450px] h-[450px] bg-blue-500/5 rounded-full animate-ping [animation-duration:4s]" />
              </div>
           )}
           
           <button 
             onClick={toggleListening} 
-            className={`w-40 h-40 rounded-full flex items-center justify-center transition-all active:scale-90 z-10 relative ${settings.isListening ? 'bg-blue-600 shadow-[0_30px_60px_rgba(37,99,235,0.4)]' : 'bg-slate-800 shadow-[inset_0_4px_10px_rgba(0,0,0,0.5)]'}`}
+            className={`w-44 h-44 rounded-full flex items-center justify-center transition-all active:scale-90 z-10 relative ${settings.isListening ? 'bg-blue-600 shadow-[0_40px_80px_rgba(37,99,235,0.4)]' : 'bg-slate-800 shadow-[inset_0_4px_12px_rgba(0,0,0,0.6)] border-t border-slate-700'}`}
           >
-            <Power size={72} className={settings.isListening ? 'text-white' : 'text-slate-600'} />
+            <Power size={80} className={settings.isListening ? 'text-white' : 'text-slate-600'} />
           </button>
 
           <div className="mt-12 text-center space-y-3">
-            <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase">
-              {settings.isListening ? 'Network Linked' : 'Shield Offline'}
+            <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-none">
+              {settings.isListening ? 'Shield On' : 'Shield Off'}
             </h2>
-            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em] italic leading-relaxed">
-              {settings.isListening ? `Trigger: "${settings.triggerPhrase}"` : 'Awaiting Activation'}
+            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.5em] italic leading-relaxed">
+              {settings.isListening ? `Trigger: "${settings.triggerPhrase}"` : 'Touch to Secure Device'}
             </p>
           </div>
         </div>
       ) : (
         <div className="space-y-5 animate-in slide-in-from-bottom-10 duration-700">
-          <div className="bg-blue-700 p-8 rounded-[3rem] shadow-[0_30px_80px_rgba(29,78,216,0.4)] relative overflow-hidden border border-blue-400/40">
+          <div className="bg-blue-700 p-8 rounded-[3rem] shadow-[0_40px_100px_rgba(29,78,216,0.4)] relative overflow-hidden border border-blue-400/50">
              <div className="flex items-center gap-5 relative z-10">
-                <div className="bg-white p-3.5 rounded-3xl text-blue-700 shadow-2xl rotate-6"><ShieldCheck size={36} /></div>
+                <div className="bg-white p-4 rounded-3xl text-blue-700 shadow-2xl rotate-6 border-4 border-blue-400/20"><ShieldCheck size={36} /></div>
                 <div className="flex-1">
-                  <h4 className="font-black text-2xl text-white italic leading-tight tracking-tighter">Emergency Link</h4>
-                  <div className="flex items-center gap-2 mt-2 text-[10px] text-blue-100 font-black uppercase tracking-widest bg-white/10 w-fit px-3 py-1 rounded-full">
-                    <Radio size={12} className="animate-pulse" /> {registeredContacts.length} Guardians Notified
+                  <h4 className="font-black text-2xl text-white italic leading-tight tracking-tighter">Emergency Mode</h4>
+                  <div className="flex items-center gap-2 mt-2 text-[10px] text-blue-100 font-black uppercase tracking-widest bg-white/20 w-fit px-4 py-1.5 rounded-full backdrop-blur-md">
+                    <Radio size={12} className="animate-pulse" /> Broadcasting to {registeredContacts.length} Guardians
                   </div>
                 </div>
              </div>
-             <div className="absolute -right-6 -bottom-6 opacity-10 rotate-12 text-white">
-                <Navigation size={140} />
+             <div className="absolute -right-10 -bottom-10 opacity-10 rotate-12 text-white">
+                <Navigation size={180} />
              </div>
           </div>
 
-          <div className="bg-slate-900 p-6 rounded-[3.5rem] border border-slate-800 h-[450px] flex flex-col shadow-[0_40px_100px_rgba(0,0,0,0.5)]">
-            <div className="flex items-center gap-2 mb-4 px-2">
-               <MessageCircle size={16} className="text-blue-500" />
-               <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Tactical Feed</h5>
+          <div className="bg-slate-900 p-7 rounded-[3.5rem] border border-slate-800 h-[480px] flex flex-col shadow-[0_50px_120px_rgba(0,0,0,0.6)] relative">
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-slate-800 rounded-full mt-3" />
+            
+            <div className="flex items-center gap-3 mb-6 px-2 mt-2">
+               <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500 shadow-sm"><MessageCircle size={18} /></div>
+               <h5 className="text-[11px] font-black uppercase tracking-[0.3em] text-slate-500 italic">Tactical Comms</h5>
             </div>
             
             <div className="flex-1 overflow-y-auto space-y-4 px-2 custom-scrollbar">
-              <div className="bg-blue-600/10 border border-blue-500/20 p-5 rounded-2xl text-[11px] text-blue-100/80 italic leading-relaxed shadow-inner">
+              <div className="bg-blue-600/10 border border-blue-500/20 p-5 rounded-[2rem] text-[11px] text-blue-100/90 italic leading-relaxed shadow-inner border-dashed">
                 {activeAlert?.message}
               </div>
               
               {activeAlert?.updates.map(msg => (
-                <div key={msg.id} className={`max-w-[85%] p-4 rounded-3xl text-[11px] leading-relaxed shadow-md ${msg.senderName === user.name ? 'ml-auto bg-blue-600 text-white rounded-br-none' : 'bg-slate-800 text-slate-300 border border-slate-700 rounded-bl-none'}`}>
-                  <div className="font-black uppercase text-[7px] mb-1.5 opacity-60 tracking-[0.2em]">{msg.senderName}</div>
-                  {msg.text}
+                <div key={msg.id} className={`max-w-[88%] p-5 rounded-[2rem] text-[12px] leading-relaxed shadow-xl animate-in fade-in slide-in-from-bottom-2 ${msg.senderName === user.name ? 'ml-auto bg-blue-600 text-white rounded-br-none border border-blue-500/50' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-bl-none'}`}>
+                  <div className="flex justify-between items-center mb-1.5 opacity-60">
+                    <span className="font-black uppercase text-[8px] tracking-[0.2em]">{msg.senderName}</span>
+                    <span className="text-[8px] font-bold">{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                  </div>
+                  <p className="font-medium leading-snug">{msg.text}</p>
                 </div>
               ))}
+              <div ref={chatEndRef} />
             </div>
 
-            <form onSubmit={sendChatMessage} className="mt-6 relative group px-2">
+            <form onSubmit={sendChatMessage} className="mt-6 relative group px-1">
               <input 
                 type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} 
-                placeholder="Broadcast tactical info..." 
-                className="w-full bg-slate-950 border border-slate-800 rounded-[2rem] py-5 pl-7 pr-16 text-xs text-white focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 shadow-inner" 
+                placeholder="Broadcast status update..." 
+                className="w-full bg-slate-950 border border-slate-800 rounded-[2rem] py-5 pl-7 pr-16 text-sm text-white font-medium focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 shadow-inner transition-all" 
               />
-              <button type="submit" className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-blue-600 text-white rounded-2xl shadow-xl hover:bg-blue-500 active:scale-95 transition-all">
+              <button type="submit" className="absolute right-4 top-1/2 -translate-y-1/2 p-4 bg-blue-600 text-white rounded-[1.4rem] shadow-2xl hover:bg-blue-500 active:scale-95 transition-all">
                 <Send size={22}/>
               </button>
             </form>
@@ -249,25 +261,25 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       )}
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 p-6 rounded-[2.5rem] text-red-500 text-[10px] font-black uppercase flex items-center gap-4 animate-bounce shadow-lg">
-          <AlertCircle size={32} className="shrink-0" />
-          <span className="leading-tight">{error}</span>
+        <div className="bg-red-500/10 border border-red-500/30 p-7 rounded-[3rem] text-red-500 text-[11px] font-black uppercase flex items-center gap-5 animate-bounce shadow-2xl">
+          <div className="p-3 bg-red-500/20 rounded-2xl"><AlertCircle size={24} className="shrink-0" /></div>
+          <span className="leading-tight flex-1">{error}</span>
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-5 pb-4">
-        <div className="bg-slate-900 p-8 rounded-[3rem] border border-slate-800 h-44 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
-          <Users size={28} className="text-blue-500 group-hover:scale-110 transition-transform" />
+      <div className="grid grid-cols-2 gap-5 pb-6">
+        <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
+          <div className="p-3 bg-blue-600/10 rounded-2xl w-fit text-blue-500 group-hover:scale-110 transition-transform"><Users size={28} /></div>
           <div>
-            <div className="text-5xl font-black text-white italic tracking-tighter">{registeredContacts.length}</div>
-            <span className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em]">Network Verified</span>
+            <div className="text-5xl font-black text-white italic tracking-tighter leading-none">{registeredContacts.length}</div>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-1 inline-block">Verifed Guards</span>
           </div>
         </div>
-        <div className="bg-slate-900 p-8 rounded-[3rem] border border-slate-800 h-44 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
-          <MapPin size={28} className={currentCoords ? 'text-blue-500 animate-pulse' : 'text-slate-700'} />
+        <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
+          <div className={`p-3 rounded-2xl w-fit ${currentCoords ? 'bg-blue-600/10 text-blue-500 animate-pulse' : 'bg-slate-800 text-slate-700'}`}><MapPin size={28} /></div>
           <div>
-            <div className="text-lg font-black text-white italic leading-tight tracking-tighter">{currentCoords ? 'Live GPS Active' : 'GPS Offline'}</div>
-            <span className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em]">Broadcasting</span>
+            <div className="text-xl font-black text-white italic leading-tight tracking-tighter">{currentCoords ? 'Live Stream' : 'GPS Offline'}</div>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-1 inline-block">Satellite Link</span>
           </div>
         </div>
       </div>
