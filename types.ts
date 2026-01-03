@@ -12,6 +12,13 @@ export interface EmergencyContact {
   isRegisteredUser: boolean; // Must be true to receive Guardian Link messages
 }
 
+export interface ChatMessage {
+  id: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
+
 export interface AppSettings {
   triggerPhrase: string;
   messageTemplate: string;
@@ -22,7 +29,7 @@ export interface AppSettings {
 export enum AppView {
   DASHBOARD = 'DASHBOARD',
   SETTINGS = 'SETTINGS',
-  GUARDIAN_LINK = 'GUARDIAN_LINK' // Renamed from ALERT_HISTORY
+  GUARDIAN_LINK = 'GUARDIAN_LINK'
 }
 
 export interface AlertLog {
@@ -32,6 +39,7 @@ export interface AlertLog {
   timestamp: number;
   location: { lat: number; lng: number } | null;
   message: string;
+  updates: ChatMessage[]; // New: support for internal two-way chat
   isLive: boolean;
   recipients: string[]; // List of registered guardian phone numbers
 }

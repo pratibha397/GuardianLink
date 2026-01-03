@@ -1,114 +1,101 @@
 
-import { Clock, ExternalLink, MapPin, Radio, Send, ShieldAlert } from 'lucide-react';
+import { Clock, ExternalLink, MapPin, Radio, Send } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { AlertLog } from '../types';
+import { AlertLog, User as AppUser, ChatMessage } from '../types';
 
 interface AlertHistoryProps {
   logs: AlertLog[];
   clearLogs: () => void;
+  user: AppUser;
 }
 
-const AlertHistory: React.FC<AlertHistoryProps> = ({ logs, clearLogs }) => {
+const AlertHistory: React.FC<AlertHistoryProps> = ({ logs, clearLogs, user }) => {
   const [incomingAlerts, setIncomingAlerts] = useState<AlertLog[]>([]);
-  const [responseMsg, setResponseMsg] = useState<{ [key: string]: string }>({});
+  const [replyText, setReplyText] = useState<{ [key: string]: string }>({});
 
   useEffect(() => {
-    const fetchGlobal = () => {
-      const GLOBAL_KEY = 'guardian_voice_global_alerts';
-      const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_KEY) || '[]');
-      setIncomingAlerts(all);
+    const fetch = () => {
+      const all: AlertLog[] = JSON.parse(localStorage.getItem('guardian_voice_global_alerts') || '[]');
+      const filtered = all.filter(a => a.recipients.includes(user.phone) && a.isLive);
+      setIncomingAlerts(filtered);
     };
-    fetchGlobal();
-    const interval = setInterval(fetchGlobal, 3000);
+    fetch();
+    const interval = setInterval(fetch, 2000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user.phone]);
 
-  const sendResponse = (log: AlertLog) => {
-    const msg = responseMsg[log.id];
-    if (!msg?.trim()) return;
+  const sendReply = (alertId: string) => {
+    const text = replyText[alertId];
+    if (!text?.trim()) return;
 
     const GLOBAL_KEY = 'guardian_voice_global_alerts';
     const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_KEY) || '[]');
-    const idx = all.findIndex(a => a.id === log.id);
+    const idx = all.findIndex(a => a.id === alertId);
     
     if (idx !== -1) {
-      const responseEntry = `[Guardian Response]: ${msg}`;
-      all[idx].message = `${all[idx].message}\n\n${responseEntry}`;
+      const msg: ChatMessage = {
+        id: Date.now().toString(),
+        senderName: user.name,
+        text,
+        timestamp: Date.now()
+      };
+      all[idx].updates.push(msg);
       localStorage.setItem(GLOBAL_KEY, JSON.stringify(all));
-      setResponseMsg({ ...responseMsg, [log.id]: '' });
+      setReplyText({ ...replyText, [alertId]: '' });
     }
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex justify-between items-center">
-        <h3 className="font-black text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
-          <Radio size={12} className="text-blue-500 animate-pulse" /> Active Link Feed
-        </h3>
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Radio size={14} className="text-blue-500 animate-pulse" />
+        <h3 className="font-black text-xs uppercase tracking-widest text-slate-500">Live Guardian Feed</h3>
       </div>
 
       <div className="space-y-6">
-        {incomingAlerts.map((log: AlertLog) => (
-          <div key={log.id} className="bg-slate-900/60 rounded-[2.5rem] border border-blue-500/20 p-6 space-y-4 relative overflow-hidden shadow-2xl">
-            <div className="absolute top-0 right-0 p-4">
-               <ShieldAlert size={20} className="text-blue-500/30" />
-            </div>
-            
+        {incomingAlerts.map(alert => (
+          <div key={alert.id} className="bg-slate-900 border border-blue-500/20 rounded-[2.5rem] p-6 space-y-4 shadow-2xl">
             <div className="flex justify-between items-start">
-              <div>
-                <h4 className="text-sm font-black text-white">{log.senderName}</h4>
-                <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold mt-1">
-                  <Clock size={10} /> {new Date(log.timestamp).toLocaleTimeString()}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center font-black">{alert.senderName[0]}</div>
+                <div>
+                  <h4 className="font-black text-sm">{alert.senderName}</h4>
+                  <div className="flex items-center gap-2 text-[9px] text-slate-500 font-bold uppercase"><Clock size={10} /> {new Date(alert.timestamp).toLocaleTimeString()}</div>
                 </div>
               </div>
-              <div className="bg-blue-600/10 text-blue-400 px-3 py-1 rounded-full text-[9px] font-black uppercase border border-blue-500/20">
-                LINK SECURED
-              </div>
+              <div className="px-3 py-1 bg-blue-600/10 border border-blue-500/20 rounded-full text-[8px] font-black text-blue-400 uppercase">Active Tracking</div>
             </div>
 
-            <div className="bg-slate-950/80 p-5 rounded-3xl border border-slate-800 text-xs text-slate-300 italic leading-relaxed whitespace-pre-line">
-              {log.message}
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs italic text-blue-100">
+              "{alert.message}"
             </div>
 
-            {log.location && (
-              <div className="flex items-center justify-between bg-blue-600/5 p-4 rounded-2xl border border-blue-500/10">
-                <div className="flex gap-2">
-                  <MapPin size={14} className="text-blue-500" />
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Live Location App Link</span>
+            <div className="max-h-48 overflow-y-auto space-y-3 px-1 custom-scrollbar">
+              {alert.updates.map(msg => (
+                <div key={msg.id} className={`p-3 rounded-2xl text-[11px] ${msg.senderName === user.name ? 'bg-blue-600 text-white ml-6' : 'bg-slate-800 text-slate-300 border border-slate-700 mr-6'}`}>
+                  {msg.text}
                 </div>
-                <a 
-                  href={`https://www.google.com/maps?q=${log.location.lat},${log.location.lng}`} 
-                  target="_blank" rel="noopener noreferrer"
-                  className="text-[9px] font-black text-white bg-blue-600 px-4 py-2 rounded-xl hover:bg-blue-500 transition-all uppercase tracking-widest flex items-center gap-1 shadow-lg shadow-blue-900/40"
-                >
-                  View Map <ExternalLink size={10} />
-                </a>
-              </div>
+              ))}
+            </div>
+
+            {alert.location && (
+              <a href={`https://www.google.com/maps?q=${alert.location.lat},${alert.location.lng}`} target="_blank" className="flex items-center justify-between bg-blue-600/10 p-4 rounded-2xl border border-blue-500/30">
+                <div className="flex gap-2 items-center"><MapPin size={16} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-slate-400">View Live Position</span></div>
+                <ExternalLink size={14} className="text-blue-400" />
+              </a>
             )}
 
-            <div className="relative mt-2">
-              <input 
-                type="text" 
-                value={responseMsg[log.id] || ''}
-                onChange={(e) => setResponseMsg({ ...responseMsg, [log.id]: e.target.value })}
-                placeholder="Acknowledge alert & reply..."
-                className="w-full bg-slate-800 border border-slate-700 rounded-2xl py-3 pl-4 pr-12 text-[11px] text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                onKeyDown={(e) => e.key === 'Enter' && sendResponse(log)}
-              />
-              <button 
-                onClick={() => sendResponse(log)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-blue-600 text-white rounded-xl hover:scale-105"
-              >
-                <Send size={14} />
-              </button>
+            <div className="flex gap-2">
+              <input type="text" value={replyText[alert.id] || ''} onChange={(e) => setReplyText({ ...replyText, [alert.id]: e.target.value })} placeholder="Respond to alert..." className="grow bg-slate-950 border border-slate-800 rounded-xl py-3 px-4 text-xs text-white" />
+              <button onClick={() => sendReply(alert.id)} className="p-3 bg-blue-600 text-white rounded-xl shadow-lg"><Send size={18}/></button>
             </div>
           </div>
         ))}
 
         {incomingAlerts.length === 0 && (
-          <div className="py-32 text-center opacity-40">
-            <Radio size={48} className="mx-auto text-slate-700 mb-4" />
-            <p className="font-black text-[10px] uppercase tracking-widest text-slate-500">Listening for Link Signals...</p>
+          <div className="py-24 text-center opacity-40">
+            <Radio size={48} className="mx-auto text-slate-800 mb-4" />
+            <p className="text-[10px] font-black uppercase text-slate-500">Listening for emergency signals...</p>
           </div>
         )}
       </div>
