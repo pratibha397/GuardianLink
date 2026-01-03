@@ -1,5 +1,5 @@
 
-import { AlertCircle, ArrowRight, CheckCircle2, ChevronDown, MessageSquare, Phone, Shield, User as UserIcon } from 'lucide-react';
+import { AlertCircle, ArrowRight, ChevronDown, MessageSquare, Phone, Shield, User as UserIcon } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { User } from '../types';
 
@@ -16,6 +16,8 @@ const COUNTRY_CODES = [
   { code: '+971', country: 'AE', flag: '🇦🇪' },
 ];
 
+const GLOBAL_REGISTRY_KEY = 'guardian_link_global_users';
+
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
@@ -27,7 +29,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [timer, setTimer] = useState(0);
   const [demoOtp, setDemoOtp] = useState('');
   const [showDemoToast, setShowDemoToast] = useState(false);
-  const [otpError, setOtpError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   const otpRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
 
@@ -41,9 +43,32 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
   const handlePhoneSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    const fullPhone = `${selectedCountry.code}${phone}`;
+    
     if (phone.length < 8) return;
     setLoading(true);
     
+    // Check global registry
+    const registry = JSON.parse(localStorage.getItem(GLOBAL_REGISTRY_KEY) || '[]');
+    const userExists = registry.some((u: any) => u.phone === fullPhone);
+
+    if (authMode === 'register' && userExists) {
+      setTimeout(() => {
+        setLoading(false);
+        setError("This number is already registered. Please sign in instead.");
+      }, 800);
+      return;
+    }
+
+    if (authMode === 'login' && !userExists) {
+      setTimeout(() => {
+        setLoading(false);
+        setError("Account not found. Please register first.");
+      }, 800);
+      return;
+    }
+
     // Generate a fresh random 4-digit code
     const newCode = Math.floor(1000 + Math.random() * 9000).toString();
     setDemoOtp(newCode);
@@ -54,8 +79,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       setTimer(30);
       setShowDemoToast(true);
       setOtp(['', '', '', '']);
-      setOtpError(false);
-      setTimeout(() => setShowDemoToast(false), 15000); // Longer toast for visibility
+      setTimeout(() => setShowDemoToast(false), 15000);
     }, 1200);
   };
 
@@ -63,7 +87,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     const sanitized = value.replace(/\D/g, '');
     if (!sanitized && value !== '') return;
     
-    setOtpError(false);
+    setError(null);
     const newOtp = [...otp];
     newOtp[index] = sanitized.slice(-1);
     setOtp(newOtp);
@@ -82,28 +106,31 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const handleVerify = (e: React.FormEvent) => {
     e.preventDefault();
     const fullOtp = otp.join('');
+    const fullPhone = `${selectedCountry.code}${phone}`;
     
     if (fullOtp.length < 4) return;
 
-    // STRICT VERIFICATION: Must match exactly. No random bypass allowed.
     if (fullOtp !== demoOtp) {
-      setOtpError(true);
+      setError("Incorrect verification code.");
       return;
     }
     
     setLoading(true);
     setTimeout(() => {
-      onLogin({
+      const newUser = {
         id: Math.random().toString(36).substr(2, 9),
-        phone: `${selectedCountry.code}${phone}`,
+        phone: fullPhone,
         name: authMode === 'register' ? name : 'User ' + phone.slice(-4)
-      });
-    }, 1000);
-  };
+      };
 
-  const resendOtp = () => {
-    if (timer > 0) return;
-    handlePhoneSubmit({ preventDefault: () => {} } as any);
+      if (authMode === 'register') {
+        const registry = JSON.parse(localStorage.getItem(GLOBAL_REGISTRY_KEY) || '[]');
+        registry.push(newUser);
+        localStorage.setItem(GLOBAL_REGISTRY_KEY, JSON.stringify(registry));
+      }
+
+      onLogin(newUser);
+    }, 1000);
   };
 
   return (
@@ -116,11 +143,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             </div>
             <div className="flex-1">
               <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Guardian Link Auth</span>
-                <span className="text-[10px] text-slate-400">now</span>
+                <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Guardian Link SMS</span>
               </div>
               <p className="text-xs text-white font-medium leading-relaxed">
-                <span className="font-black">Security Code:</span> <span className="bg-blue-600 px-2 py-0.5 rounded font-black text-white text-lg tracking-widest">{demoOtp}</span>
+                Code: <span className="bg-blue-600 px-2 py-0.5 rounded font-black text-white text-lg tracking-widest">{demoOtp}</span>
               </p>
             </div>
           </div>
@@ -134,7 +160,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           </div>
           <div>
             <h1 className="text-4xl font-black tracking-tighter text-white italic">Guardian Link</h1>
-            <p className="text-slate-400 font-medium mt-1">Unified Safety Network</p>
+            <p className="text-slate-400 font-medium mt-1 uppercase tracking-[0.2em] text-[10px]">Secure Safety Network</p>
           </div>
         </div>
 
@@ -143,15 +169,15 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             {step === 'phone' ? (
               <>
                 <div className="flex p-1 bg-slate-950/50 rounded-2xl mb-8 border border-slate-800/50">
-                  <button onClick={() => setAuthMode('register')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Sign Up</button>
-                  <button onClick={() => setAuthMode('login')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Sign In</button>
+                  <button onClick={() => { setAuthMode('register'); setError(null); }} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Sign Up</button>
+                  <button onClick={() => { setAuthMode('login'); setError(null); }} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Sign In</button>
                 </div>
                 <form onSubmit={handlePhoneSubmit} className="space-y-6">
                   <div className="space-y-4">
                     {authMode === 'register' && (
                       <div className="relative group">
                         <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors" size={18} />
-                        <input type="text" required placeholder="Display Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50 transition-all h-14" />
+                        <input type="text" required placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50 transition-all h-14" />
                       </div>
                     )}
                     <div className="flex gap-2 h-14">
@@ -167,56 +193,47 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                       </div>
                     </div>
                   </div>
+
+                  {error && (
+                    <div className="bg-red-500/10 border border-red-500/30 p-3 rounded-xl text-red-500 text-[10px] font-bold flex items-center gap-2 animate-in slide-in-from-top-1">
+                      <AlertCircle size={14} /> {error}
+                    </div>
+                  )}
+
                   <button type="submit" disabled={loading || phone.length < 8} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black uppercase tracking-widest py-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20">
-                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>{authMode === 'register' ? 'Register Account' : 'Secure Login'} <ArrowRight size={18} /></>}
+                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>{authMode === 'register' ? 'Register Now' : 'Authorize Login'} <ArrowRight size={18} /></>}
                   </button>
                 </form>
               </>
             ) : (
-              <form onSubmit={handleVerify} className={`space-y-8 animate-in slide-in-from-right-4 duration-300 ${otpError ? 'animate-shake' : ''}`}>
+              <form onSubmit={handleVerify} className={`space-y-8 animate-in slide-in-from-right-4 duration-300`}>
                 <div className="text-center space-y-2">
-                  <div className="inline-flex items-center gap-2 text-blue-400 bg-blue-400/10 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-blue-400/20">
-                    <CheckCircle2 size={12} /> Verification Pending
-                  </div>
-                  <h3 className="text-2xl font-black text-white">Enter App Code</h3>
-                  <p className="text-sm text-slate-400 italic">Please enter the code shown in the toast notification</p>
+                  <h3 className="text-2xl font-black text-white">App Verification</h3>
+                  <p className="text-sm text-slate-400">Enter the 4-digit code sent to you</p>
                 </div>
 
                 <div className="flex justify-center gap-3">
                   {otp.map((digit, i) => (
-                    <input key={i} ref={otpRefs[i]} type="text" inputMode="numeric" maxLength={1} value={digit} onChange={(e) => handleOtpChange(i, e.target.value)} onKeyDown={(e) => handleKeyDown(i, e)} className={`w-14 h-16 bg-slate-950/80 border-2 rounded-2xl text-center text-2xl font-black transition-all focus:outline-none focus:ring-4 focus:ring-blue-600/10 ${otpError ? 'border-red-500 text-red-500' : 'border-slate-800 text-blue-500 focus:border-blue-600'}`} />
+                    <input key={i} ref={otpRefs[i]} type="text" inputMode="numeric" maxLength={1} value={digit} onChange={(e) => handleOtpChange(i, e.target.value)} onKeyDown={(e) => handleKeyDown(i, e)} className={`w-14 h-16 bg-slate-950/80 border-2 rounded-2xl text-center text-2xl font-black transition-all focus:outline-none focus:ring-4 focus:ring-blue-600/10 ${error ? 'border-red-500 text-red-500' : 'border-slate-800 text-blue-500 focus:border-blue-600'}`} />
                   ))}
                 </div>
 
-                {otpError && (
+                {error && (
                   <div className="flex items-center justify-center gap-2 text-red-500 text-xs font-bold animate-pulse">
-                    <AlertCircle size={14} /> INVALID CODE. Check notification.
+                    <AlertCircle size={14} /> {error}
                   </div>
                 )}
 
                 <div className="space-y-4">
                   <button type="submit" disabled={loading || otp.join('').length < 4} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black uppercase tracking-widest py-4 rounded-2xl flex items-center justify-center transition-all shadow-lg shadow-blue-900/20">
-                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Confirm & Enter App'}
+                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Enter Guardian Link'}
                   </button>
-                  <div className="text-center">
-                    <button type="button" onClick={resendOtp} disabled={timer > 0} className={`text-xs font-black uppercase tracking-widest transition-colors ${timer > 0 ? 'text-slate-600' : 'text-blue-500 hover:text-blue-400'}`}>
-                      {timer > 0 ? `Retry in ${timer}s` : 'Resend Notification'}
-                    </button>
-                  </div>
                 </div>
               </form>
             )}
           </div>
         </div>
       </div>
-      <style>{`
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-8px); }
-          75% { transform: translateX(8px); }
-        }
-        .animate-shake { animation: shake 0.2s ease-in-out 0s 2; }
-      `}</style>
     </div>
   );
 };

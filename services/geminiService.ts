@@ -20,30 +20,11 @@ function encode(bytes: Uint8Array) {
   return btoa(binary);
 }
 
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
 const triggerAlertFunction: FunctionDeclaration = {
   name: 'triggerEmergencyAlert',
   parameters: {
     type: Type.OBJECT,
-    description: 'Call this function immediately when you detect the user saying the specific trigger phrase.',
+    description: 'Call this function immediately when you detect the user saying the specific trigger phrase indicating danger.',
     properties: {
       detectedPhrase: {
         type: Type.STRING,
@@ -63,31 +44,18 @@ interface LiveSessionOptions {
 export class GeminiVoiceMonitor {
   private sessionPromise: Promise<any> | null = null;
   private inputAudioContext: AudioContext | null = null;
-  private outputAudioContext: AudioContext | null = null;
-  private outputNode: GainNode | null = null;
   private stream: MediaStream | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
-  private nextStartTime: number = 0;
-  private sources: Set<AudioBufferSourceNode> = new Set();
 
   constructor(private options: LiveSessionOptions) {}
 
   async start() {
     try {
-      // Accessing the injected variable from vite.config.ts
       const apiKey = process.env.API_KEY;
-      
-      if (!apiKey || apiKey === '') {
-        throw new Error('API Key is missing. Please ensure you have added "API_KEY" to your Environment Variables on Vercel.');
-      }
+      if (!apiKey) throw new Error('API Key missing.');
 
       const ai = new GoogleGenAI({ apiKey });
-
       this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      this.outputNode = this.outputAudioContext.createGain();
-      this.outputNode.connect(this.outputAudioContext.destination);
-
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       this.sessionPromise = ai.live.connect({
@@ -100,94 +68,57 @@ export class GeminiVoiceMonitor {
             if (message.toolCall) {
               for (const fc of message.toolCall?.functionCalls) {
                 if (fc.name === 'triggerEmergencyAlert') {
-                  const detectedPhrase = (fc.args as any).detectedPhrase as string;
-                  this.options.onAlert(detectedPhrase);
+                  this.options.onAlert((fc.args as any).detectedPhrase);
                   this.sessionPromise?.then(session => {
                     session.sendToolResponse({
                       functionResponses: {
                         id: fc.id,
                         name: fc.name,
-                        response: { result: "Emergency protocol initiated." },
+                        response: { result: "Emergency verified. Link active." },
                       }
                     });
                   });
                 }
               }
             }
-
-            const base64EncodedAudioString = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64EncodedAudioString && this.outputAudioContext && this.outputNode) {
-              this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
-              const audioBuffer = await decodeAudioData(
-                decode(base64EncodedAudioString),
-                this.outputAudioContext,
-                24000,
-                1,
-              );
-              const source = this.outputAudioContext.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(this.outputNode);
-              source.addEventListener('ended', () => {
-                this.sources.delete(source);
-              });
-              source.start(this.nextStartTime);
-              this.nextStartTime = this.nextStartTime + audioBuffer.duration;
-              this.sources.add(source);
-            }
-
-            if (message.serverContent?.interrupted) {
-              for (const source of this.sources.values()) {
-                source.stop();
-                this.sources.delete(source);
-              }
-              this.nextStartTime = 0;
-            }
           },
           onerror: (e: any) => {
-            console.error('Gemini Voice Monitor Error:', e);
-            this.options.onError('Connection error. Verify your API key is active and has billing attached.');
+            console.error('Monitor Error:', e);
+            this.options.onError('Guardian AI connection lost.');
           },
           onclose: () => {}
         },
         config: {
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [triggerAlertFunction] }],
-          systemInstruction: `You are a real-time safety monitor. 
-          LISTEN CONTINUOUSLY for the trigger phrase: "${this.options.triggerPhrase}". 
-          When you hear it, call triggerEmergencyAlert IMMEDIATELY. 
-          Stay silent otherwise.`,
+          systemInstruction: `You are a SILENT safety engine. 
+          NEVER speak. NEVER reply to conversations. 
+          Your ONLY job is to monitor audio and call 'triggerEmergencyAlert' ONLY if you hear the phrase: "${this.options.triggerPhrase}". 
+          Remain 100% silent at all times.`,
         }
       });
     } catch (err: any) {
-      console.error('Failed to start Gemini monitor:', err);
-      this.options.onError(err.message || 'Check your internet connection and API Key.');
+      this.options.onError(err.message);
     }
   }
 
   private setupMicrophone() {
     if (!this.inputAudioContext || !this.stream) return;
-
     const source = this.inputAudioContext.createMediaStreamSource(this.stream);
     this.scriptProcessor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
-
     this.scriptProcessor.onaudioprocess = (event) => {
       const inputData = event.inputBuffer.getChannelData(0);
       const l = inputData.length;
       const int16 = new Int16Array(l);
-      for (let i = 0; i < l; i++) {
-        int16[i] = inputData[i] * 32768;
-      }
-      
+      for (let i = 0; i < l; i++) int16[i] = inputData[i] * 32768;
       const pcmBlob: Blob = {
         data: encode(new Uint8Array(int16.buffer)),
         mimeType: 'audio/pcm;rate=16000',
       };
-
       this.sessionPromise?.then((session) => {
         session.sendRealtimeInput({ media: pcmBlob });
       });
     };
-
     source.connect(this.scriptProcessor);
     this.scriptProcessor.connect(this.inputAudioContext.destination);
   }
@@ -196,11 +127,7 @@ export class GeminiVoiceMonitor {
     if (this.scriptProcessor) this.scriptProcessor.disconnect();
     if (this.stream) this.stream.getTracks().forEach(track => track.stop());
     if (this.inputAudioContext && this.inputAudioContext.state !== 'closed') await this.inputAudioContext.close();
-    if (this.outputAudioContext && this.outputAudioContext.state !== 'closed') await this.outputAudioContext.close();
-    
     this.sessionPromise?.then(session => session.close());
     this.sessionPromise = null;
-    this.sources.clear();
-    this.nextStartTime = 0;
   }
 }
