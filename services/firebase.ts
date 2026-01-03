@@ -1,22 +1,36 @@
+
 import { initializeApp } from "firebase/app";
 import { getAuth, RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { DataSnapshot, getDatabase, onValue, push, ref, set, update } from "firebase/database";
 import { collection, doc, getDoc, getDocs, getFirestore, query, setDoc, where } from "firebase/firestore";
 
-// Configuration for Guardian Mesh Network
+/**
+ * Aegis Mesh Firebase Configuration.
+ * 
+ * This configuration pulls from your .env file.
+ * Ensure you have set: FIREBASE_PROJECT_ID, FIREBASE_APP_ID, etc.
+ */
 const firebaseConfig = {
-  apiKey: "YOUR_FIREBASE_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID,
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID
 };
+
+// Check for required fields to avoid initialization errors
+if (!firebaseConfig.projectId || !firebaseConfig.appId) {
+  console.warn(
+    "[Aegis Mesh] Firebase configuration is incomplete. " +
+    "Please ensure FIREBASE_PROJECT_ID and FIREBASE_APP_ID are set in your environment."
+  );
+}
 
 const app = initializeApp(firebaseConfig);
 
-// Instances
+// Service Instances
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const rtdb = getDatabase(app);
