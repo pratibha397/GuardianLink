@@ -55,7 +55,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       setShowDemoToast(true);
       setOtp(['', '', '', '']);
       setOtpError(false);
-      setTimeout(() => setShowDemoToast(false), 8000);
+      setTimeout(() => setShowDemoToast(false), 15000); // Longer toast for visibility
     }, 1200);
   };
 
@@ -85,10 +85,9 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     
     if (fullOtp.length < 4) return;
 
-    // Strict comparison with the generated demo code
+    // STRICT VERIFICATION: Must match exactly. No random bypass allowed.
     if (fullOtp !== demoOtp) {
       setOtpError(true);
-      // Visual feedback: clear and shake (shake via CSS classes)
       return;
     }
     
@@ -117,11 +116,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             </div>
             <div className="flex-1">
               <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">System SMS</span>
+                <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Guardian Link Auth</span>
                 <span className="text-[10px] text-slate-400">now</span>
               </div>
               <p className="text-xs text-white font-medium leading-relaxed">
-                <span className="font-black">Guardian Auth:</span> Your secure code is <span className="bg-blue-600 px-1.5 rounded font-black text-white">{demoOtp}</span>.
+                <span className="font-black">Security Code:</span> <span className="bg-blue-600 px-2 py-0.5 rounded font-black text-white text-lg tracking-widest">{demoOtp}</span>
               </p>
             </div>
           </div>
@@ -134,8 +133,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             <Shield size={48} className="text-white" />
           </div>
           <div>
-            <h1 className="text-4xl font-black tracking-tighter text-white">GuardianVoice</h1>
-            <p className="text-slate-400 font-medium mt-1">Advanced Safety Network</p>
+            <h1 className="text-4xl font-black tracking-tighter text-white italic">Guardian Link</h1>
+            <p className="text-slate-400 font-medium mt-1">Unified Safety Network</p>
           </div>
         </div>
 
@@ -144,15 +143,15 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             {step === 'phone' ? (
               <>
                 <div className="flex p-1 bg-slate-950/50 rounded-2xl mb-8 border border-slate-800/50">
-                  <button onClick={() => setAuthMode('register')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Register</button>
-                  <button onClick={() => setAuthMode('login')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Login</button>
+                  <button onClick={() => setAuthMode('register')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Sign Up</button>
+                  <button onClick={() => setAuthMode('login')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${authMode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Sign In</button>
                 </div>
                 <form onSubmit={handlePhoneSubmit} className="space-y-6">
                   <div className="space-y-4">
                     {authMode === 'register' && (
                       <div className="relative group">
                         <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors" size={18} />
-                        <input type="text" required placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50 transition-all h-14" />
+                        <input type="text" required placeholder="Display Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-600/50 transition-all h-14" />
                       </div>
                     )}
                     <div className="flex gap-2 h-14">
@@ -169,7 +168,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                     </div>
                   </div>
                   <button type="submit" disabled={loading || phone.length < 8} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black uppercase tracking-widest py-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20">
-                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>{authMode === 'register' ? 'Create Account' : 'Verify Identity'} <ArrowRight size={18} /></>}
+                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>{authMode === 'register' ? 'Register Account' : 'Secure Login'} <ArrowRight size={18} /></>}
                   </button>
                 </form>
               </>
@@ -177,10 +176,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               <form onSubmit={handleVerify} className={`space-y-8 animate-in slide-in-from-right-4 duration-300 ${otpError ? 'animate-shake' : ''}`}>
                 <div className="text-center space-y-2">
                   <div className="inline-flex items-center gap-2 text-blue-400 bg-blue-400/10 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-blue-400/20">
-                    <CheckCircle2 size={12} /> SMS Delivered
+                    <CheckCircle2 size={12} /> Verification Pending
                   </div>
-                  <h3 className="text-2xl font-black text-white">Confirm Code</h3>
-                  <p className="text-sm text-slate-400">Sent to <span className="text-white font-bold">{selectedCountry.code} {phone}</span></p>
+                  <h3 className="text-2xl font-black text-white">Enter App Code</h3>
+                  <p className="text-sm text-slate-400 italic">Please enter the code shown in the toast notification</p>
                 </div>
 
                 <div className="flex justify-center gap-3">
@@ -190,21 +189,20 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                 </div>
 
                 {otpError && (
-                  <div className="flex items-center justify-center gap-2 text-red-500 text-xs font-bold animate-in fade-in zoom-in">
-                    <AlertCircle size={14} /> Incorrect code. Try again.
+                  <div className="flex items-center justify-center gap-2 text-red-500 text-xs font-bold animate-pulse">
+                    <AlertCircle size={14} /> INVALID CODE. Check notification.
                   </div>
                 )}
 
                 <div className="space-y-4">
                   <button type="submit" disabled={loading || otp.join('').length < 4} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black uppercase tracking-widest py-4 rounded-2xl flex items-center justify-center transition-all shadow-lg shadow-blue-900/20">
-                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Complete Setup'}
+                    {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Confirm & Enter App'}
                   </button>
                   <div className="text-center">
                     <button type="button" onClick={resendOtp} disabled={timer > 0} className={`text-xs font-black uppercase tracking-widest transition-colors ${timer > 0 ? 'text-slate-600' : 'text-blue-500 hover:text-blue-400'}`}>
-                      {timer > 0 ? `Resend in ${timer}s` : 'Get New Code'}
+                      {timer > 0 ? `Retry in ${timer}s` : 'Resend Notification'}
                     </button>
                   </div>
-                  <button type="button" onClick={() => { setStep('phone'); setOtp(['','','','']); setOtpError(false); }} className="w-full text-[10px] text-slate-500 hover:text-white transition-colors uppercase tracking-widest font-bold">Back to start</button>
                 </div>
               </form>
             )}

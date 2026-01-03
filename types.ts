@@ -9,7 +9,7 @@ export interface EmergencyContact {
   id: string;
   name: string;
   phone: string;
-  isRegisteredUser: boolean;
+  isRegisteredUser: boolean; // Must be true to receive Guardian Link messages
 }
 
 export interface AppSettings {
@@ -22,15 +22,16 @@ export interface AppSettings {
 export enum AppView {
   DASHBOARD = 'DASHBOARD',
   SETTINGS = 'SETTINGS',
-  ALERT_HISTORY = 'ALERT_HISTORY'
+  GUARDIAN_LINK = 'GUARDIAN_LINK' // Renamed from ALERT_HISTORY
 }
 
 export interface AlertLog {
   id: string;
   senderPhone: string;
+  senderName: string;
   timestamp: number;
   location: { lat: number; lng: number } | null;
   message: string;
   isLive: boolean;
-  recipients: string[];
+  recipients: string[]; // List of registered guardian phone numbers
 }
