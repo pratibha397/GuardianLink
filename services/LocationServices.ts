@@ -1,7 +1,7 @@
 import { GuardianCoords } from '../types';
 
 /**
- * High-performance Location Service for GuardianVoice.
+ * High-performance Location Service for Aegis Mesh.
  * Optimized for emergency tracking with high accuracy.
  */
 
@@ -44,10 +44,10 @@ export function startLocationWatch(
           msg = "Permission Denied: Please enable location access.";
           break;
         case error.POSITION_UNAVAILABLE:
-          msg = "Signal Lost: GPS position is currently unavailable.";
+          msg = "Signal Lost: GPS position unavailable.";
           break;
         case error.TIMEOUT:
-          msg = "GPS Timeout: Request for location timed out.";
+          msg = "GPS Timeout: Location request timed out.";
           break;
       }
       onError(msg);

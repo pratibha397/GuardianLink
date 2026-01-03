@@ -8,8 +8,16 @@ export interface GuardianCoords {
   lat: number;
   lng: number;
   accuracy: number;
-  speed: number | null;
-  heading: number | null;
+  speed?: number | null;
+  heading?: number | null;
+  timestamp: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  senderName: string;
+  senderPhone: string;
+  text: string;
   timestamp: number;
 }
 
@@ -20,26 +28,23 @@ export interface EmergencyContact {
   isRegisteredUser: boolean;
 }
 
-export interface ChatMessage {
-  id: string;
-  senderName: string;
-  senderPhone: string;
-  text: string;
-  timestamp: number;
-  location?: { lat: number; lng: number };
-}
-
 export interface AppSettings {
   triggerPhrase: string;
-  messageTemplate: string;
+  checkInDuration: number; // minutes
   contacts: EmergencyContact[];
   isListening: boolean;
 }
 
+export interface SafeSpot {
+  name: string;
+  uri: string;
+  distance?: string;
+}
+
 export enum AppView {
   DASHBOARD = 'DASHBOARD',
-  SETTINGS = 'SETTINGS',
-  GUARDIAN_LINK = 'GUARDIAN_LINK'
+  MESH = 'MESH',
+  SETTINGS = 'SETTINGS'
 }
 
 export interface AlertLog {
@@ -47,9 +52,9 @@ export interface AlertLog {
   senderPhone: string;
   senderName: string;
   timestamp: number;
-  location: { lat: number; lng: number } | null;
+  location: GuardianCoords | null;
   message: string;
-  updates: ChatMessage[];
   isLive: boolean;
-  recipients: string[]; // Normalized last 10 digits
+  recipients: string[];
+  updates?: Record<string, ChatMessage>;
 }

@@ -1,112 +1,54 @@
-import { AlertCircle, Lock, MapPin, MessageCircle, Navigation, Power, Radio, Send, ShieldAlert, ShieldCheck, Unlock, Users } from 'lucide-react';
+
+import { GoogleGenAI } from "@google/genai";
+import {
+  Activity,
+  ChevronRight,
+  Compass,
+  MapPin,
+  Power,
+  Search, ShieldAlert,
+  Timer,
+  Zap
+} from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { startLocationWatch, stopLocationWatch } from '../services/LocationServices';
-import { DataSnapshot, onValue, push, ref, rtdb, set, update } from '../services/firebase';
+import { startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { ref, rtdb, set } from '../services/firebase';
 import { GeminiVoiceMonitor } from '../services/geminiService';
-import { AlertLog, AppSettings, User as AppUser, ChatMessage, GuardianCoords } from '../types';
+import { AlertLog, AppSettings, GuardianCoords, SafeSpot, User } from '../types';
 
 interface DashboardProps {
-  user: AppUser;
+  user: User;
   settings: AppSettings;
   updateSettings: (s: Partial<AppSettings>) => void;
-  onAlertTriggered: (log: AlertLog) => void;
   isEmergency: boolean;
+  onAlert: (log: AlertLog) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, onAlertTriggered, isEmergency }) => {
-  const [currentCoords, setCurrentCoords] = useState<GuardianCoords | null>(null);
-  const [chatMessage, setChatMessage] = useState('');
-  const [activeAlert, setActiveAlert] = useState<AlertLog | null>(null);
-  const [wakeLock, setWakeLock] = useState<any>(null);
+const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, isEmergency, onAlert }) => {
+  const [coords, setCoords] = useState<GuardianCoords | null>(null);
+  const [timerActive, setTimerActive] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [safeSpots, setSafeSpots] = useState<SafeSpot[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  
   const monitorRef = useRef<GeminiVoiceMonitor | null>(null);
   const watchIdRef = useRef<number>(-1);
-  const [error, setError] = useState<string | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  
-  const recognitionRef = useRef<any>(null);
-
-  const registeredContacts = settings.contacts.filter(c => c.isRegisteredUser);
+  const timerRef = useRef<any>(null);
 
   useEffect(() => {
-    if (settings.isListening && !isEmergency) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = true;
-        recognitionRef.current.lang = 'en-US';
-        recognitionRef.current.onresult = (event: any) => {
-          const last = event.results.length - 1;
-          const text = event.results[last][0].transcript.toUpperCase();
-          if (text.includes('HELP') || text.includes(settings.triggerPhrase.toUpperCase())) {
-            triggerAlert(false);
-          }
-        };
-        recognitionRef.current.start();
-      }
-    } else {
-      recognitionRef.current?.stop();
+    if (timerActive && timeLeft > 0) {
+      timerRef.current = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
+    } else if (timerActive && timeLeft === 0) {
+      triggerSOS("Safety Timer Expired");
     }
-    return () => recognitionRef.current?.stop();
-  }, [settings.isListening, isEmergency, settings.triggerPhrase]);
-
-  useEffect(() => {
-    if (!isEmergency) {
-      setActiveAlert(null);
-      return;
-    }
-    
-    const alertsRef = ref(rtdb, 'alerts');
-    const unsubscribe = onValue(alertsRef, (snapshot: DataSnapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const mine = Object.values(data).find((a: any) => 
-          a.senderPhone === user.phone && a.isLive
-        ) as AlertLog;
-        if (mine) setActiveAlert(mine);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [isEmergency, user.phone]);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeAlert?.updates]);
-
-  useEffect(() => {
-    const requestWakeLock = async () => {
-      if ('wakeLock' in navigator) {
-        try {
-          const lock = await (navigator as any).wakeLock.request('screen');
-          setWakeLock(lock);
-        } catch (err) {}
-      }
-    };
-    if (settings.isListening || isEmergency) requestWakeLock();
-    else if (wakeLock) {
-      wakeLock.release().then(() => setWakeLock(null));
-    }
-  }, [settings.isListening, isEmergency]);
+    return () => clearTimeout(timerRef.current);
+  }, [timerActive, timeLeft]);
 
   useEffect(() => {
     if (settings.isListening || isEmergency) {
       watchIdRef.current = startLocationWatch(
-        (coords: GuardianCoords) => {
-          setCurrentCoords(coords);
-          setError(null);
-          
-          if (isEmergency && activeAlert) {
-            update(ref(rtdb, `alerts/${activeAlert.id}`), {
-              location: { lat: coords.lat, lng: coords.lng }
-            });
-            set(ref(rtdb, `live_locations/${user.id}`), {
-              lat: coords.lat,
-              lng: coords.lng,
-              timestamp: Date.now()
-            });
-          }
-        },
-        (errMessage: string) => setError(errMessage)
+        (c: GuardianCoords) => setCoords(c),
+        (err: string) => console.error("[Aegis GPS]", err)
       );
     } else {
       if (watchIdRef.current !== -1) {
@@ -114,80 +56,20 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         watchIdRef.current = -1;
       }
     }
-    return () => {
-      if (watchIdRef.current !== -1) {
-        stopLocationWatch(watchIdRef.current);
-      }
-    };
-  }, [settings.isListening, isEmergency, user.phone, activeAlert]);
+    return () => stopLocationWatch(watchIdRef.current);
+  }, [settings.isListening, isEmergency]);
 
-  const triggerAlert = async (manual = false) => {
-    if (registeredContacts.length === 0) {
-      setError("Shield Offline: No verified Guardians linked. Update mesh links in Config.");
-      return;
-    }
-
-    const startAlert = async (loc: {lat: number, lng: number} | null) => {
-      const alertId = Date.now().toString();
-      const newLog: AlertLog = {
-        id: alertId,
-        senderPhone: user.phone,
-        senderName: user.name,
-        timestamp: Date.now(),
-        location: loc,
-        message: manual ? "🚨 MANUAL SOS TRIGGERED 🚨" : "🚨 VOICE ACTIVATED ALERT 🚨",
-        updates: [],
-        isLive: true,
-        recipients: registeredContacts.map(c => c.phone)
-      };
-
-      await set(ref(rtdb, `alerts/${alertId}`), newLog);
-      onAlertTriggered(newLog);
-      setActiveAlert(newLog);
-      setError(null);
-    };
-
-    if (currentCoords) {
-      startAlert({ lat: currentCoords.lat, lng: currentCoords.lng });
-    } else {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => startAlert({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => startAlert(null),
-        { enableHighAccuracy: true }
-      );
-    }
-  };
-
-  const sendChatMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim() || !activeAlert) return;
-
-    const msg: ChatMessage = {
-      id: Date.now().toString(),
-      senderName: user.name,
-      senderPhone: user.phone,
-      text: chatMessage,
-      timestamp: Date.now(),
-      location: currentCoords ? { lat: currentCoords.lat, lng: currentCoords.lng } : undefined
-    };
-
-    const updatesRef = ref(rtdb, `alerts/${activeAlert.id}/updates`);
-    const newMessageRef = push(updatesRef);
-    await set(newMessageRef, msg);
-    setChatMessage('');
-  };
-
-  const toggleListening = async () => {
+  const toggleGuard = async () => {
     if (settings.isListening) {
-      if (monitorRef.current) await monitorRef.current.stop();
+      await monitorRef.current?.stop();
       monitorRef.current = null;
       updateSettings({ isListening: false });
     } else {
-      setError(null);
       const monitor = new GeminiVoiceMonitor({
         triggerPhrase: settings.triggerPhrase,
-        onAlert: () => triggerAlert(false),
-        onError: (err) => { setError(err); updateSettings({ isListening: false }); }
+        onAlert: (phrase: string) => triggerSOS(`Voice Trigger: ${phrase}`),
+        onFakeCall: () => alert("INCOMING CALL: Home Security"),
+        onError: () => updateSettings({ isListening: false })
       });
       await monitor.start();
       monitorRef.current = monitor;
@@ -195,120 +77,161 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
     }
   };
 
+  const triggerSOS = async (reason: string) => {
+    const alertId = `alert_${Date.now()}`;
+    const log: AlertLog = {
+      id: alertId,
+      senderPhone: user.phone,
+      senderName: user.name,
+      timestamp: Date.now(),
+      location: coords,
+      message: reason,
+      isLive: true,
+      recipients: settings.contacts.map(c => c.phone)
+    };
+    
+    await set(ref(rtdb, `alerts/${alertId}`), log);
+    onAlert(log);
+    setTimerActive(false);
+  };
+
+  const findSafeSpots = async () => {
+    if (!coords) return;
+    setIsSearching(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `I am at ${coords.lat}, ${coords.lng}. List nearest police stations or 24/7 hospitals for safety.`,
+        config: {
+          tools: [{ googleMaps: {} }],
+          toolConfig: { retrievalConfig: { latLng: { latitude: coords.lat, longitude: coords.lng } } }
+        }
+      });
+      
+      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      const spots = chunks
+        .filter((c: any) => c.maps)
+        .map((c: any) => ({
+          name: c.maps.title,
+          uri: c.maps.uri
+        })) as SafeSpot[];
+      
+      setSafeSpots(spots.slice(0, 3));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   return (
-    <div className="space-y-6 pb-12">
-      <div className={`p-4 rounded-3xl flex items-center justify-between border ${wakeLock ? 'bg-green-500/10 border-green-500/20 text-green-500 shadow-lg' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-        <div className="flex items-center gap-3">
-          {wakeLock ? <Lock size={14} className="animate-pulse" /> : <Unlock size={14} />}
-          <span className="text-[10px] font-black uppercase tracking-widest">{wakeLock ? 'Screen Lock Active' : 'Standby Mode'}</span>
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="flex flex-col items-center justify-center pt-8">
+        <div className={`neural-ring ${settings.isListening ? 'active' : ''}`}>
+          {settings.isListening && (
+            <>
+              <div className="ring-layer" style={{ animationDelay: '0s' }} />
+              <div className="ring-layer" style={{ animationDelay: '1s' }} />
+            </>
+          )}
+          <button 
+            onClick={toggleGuard}
+            className={`relative z-10 w-32 h-32 rounded-full flex items-center justify-center transition-all duration-500 ${settings.isListening ? 'bg-sky-500 shadow-[0_0_40px_rgba(56,189,248,0.5)] scale-110' : 'bg-slate-800'}`}
+          >
+            <Power size={48} className={settings.isListening ? 'text-white' : 'text-slate-500'} />
+          </button>
         </div>
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${currentCoords ? 'bg-blue-500 animate-pulse' : 'bg-slate-700'}`} />
-          <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'GPS Live' : 'No Signal'}</span>
+        
+        <div className="mt-8 text-center">
+          <h2 className="text-2xl font-bold tracking-tight uppercase italic flex items-center gap-2 justify-center">
+            {settings.isListening ? <Activity className="text-sky-400 animate-pulse" size={20} /> : null}
+            {settings.isListening ? 'Mesh Active' : 'Mesh Standby'}
+          </h2>
+          <p className="text-[10px] mono text-slate-500 uppercase tracking-widest mt-2">
+            {settings.isListening ? `Monitoring: "${settings.triggerPhrase}"` : 'Tactical AI Guard Offline'}
+          </p>
         </div>
       </div>
 
-      {!isEmergency ? (
-        <>
-          <div className={`p-14 rounded-[4rem] flex flex-col items-center justify-center border-2 transition-all duration-700 ${settings.isListening ? 'bg-blue-600/5 border-blue-500/40 shadow-2xl' : 'bg-slate-900 border-slate-800 shadow-2xl'}`}>
-            <button onClick={toggleListening} className={`w-44 h-44 rounded-full flex items-center justify-center transition-all ${settings.isListening ? 'bg-blue-600 shadow-[0_30px_60px_rgba(37,99,235,0.4)]' : 'bg-slate-800 shadow-inner'}`}>
-              <Power size={80} className={settings.isListening ? 'text-white' : 'text-slate-600'} />
-            </button>
-            <div className="mt-12 text-center space-y-3">
-              <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-none">{settings.isListening ? 'AI Guard On' : 'AI Guard Off'}</h2>
-              <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em] leading-relaxed px-6">
-                {settings.isListening ? `Listening for: "${settings.triggerPhrase}"` : 'Touch icon to begin voice monitoring'}
-              </p>
+      <div className="grid grid-cols-2 gap-4">
+        <div 
+          onClick={() => {
+            if (timerActive) setTimerActive(false);
+            else { setTimerActive(true); setTimeLeft(settings.checkInDuration * 60); }
+          }}
+          className={`glass p-5 rounded-[2rem] border transition-all ${timerActive ? 'border-sky-500/50 bg-sky-500/5' : 'border-white/5'}`}
+        >
+          <div className="flex justify-between items-start mb-4">
+            <div className={`p-2.5 rounded-xl ${timerActive ? 'bg-sky-500 text-white' : 'bg-slate-800 text-slate-500'}`}>
+              <Timer size={20} />
             </div>
+            {timerActive && <div className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />}
           </div>
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Aegis Timer</p>
+          <div className="text-xl font-bold mono mt-1">
+            {timerActive ? `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}` : 'Check-In'}
+          </div>
+        </div>
 
+        <div onClick={() => triggerSOS("Manual SOS Tap")} className="bg-red-950/40 border border-red-500/20 p-5 rounded-[2rem] flex flex-col justify-between active:scale-95 transition-transform">
+          <div className="p-2.5 bg-red-600 rounded-xl w-fit text-white shadow-lg">
+            <ShieldAlert size={20} />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Instant</p>
+            <div className="text-xl font-bold italic tracking-tighter text-white">PANIC SOS</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass rounded-[2.5rem] p-6 border border-white/5">
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-sky-500/10 rounded-lg text-sky-400">
+              <Compass size={18} />
+            </div>
+            <h3 className="text-sm font-bold uppercase tracking-widest italic">Tactical Safe Zones</h3>
+          </div>
           <button 
-            onClick={() => triggerAlert(true)}
-            className="w-full bg-red-600 hover:bg-red-500 p-8 rounded-[3.5rem] flex items-center justify-center gap-6 shadow-2xl active:scale-95 transition-all group border-2 border-red-400/20"
+            onClick={findSafeSpots}
+            disabled={isSearching || !coords}
+            className="text-[10px] font-bold text-sky-400 uppercase tracking-widest flex items-center gap-1 disabled:opacity-50"
           >
-            <div className="bg-white/20 p-4 rounded-3xl group-hover:rotate-12 transition-transform"><ShieldAlert size={44} className="text-white" /></div>
-            <div className="text-left">
-              <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase leading-none">Panic SOS</h3>
-              <p className="text-red-100 text-[10px] font-black uppercase tracking-widest mt-1 opacity-70">Manual Mesh Activation</p>
-            </div>
+            {isSearching ? 'Scanning...' : 'Scan Area'} <Search size={12} />
           </button>
-        </>
-      ) : (
-        <div className="space-y-5 animate-in slide-in-from-bottom-10 duration-700">
-          <div className="bg-red-600 p-8 rounded-[3rem] shadow-[0_40px_100px_rgba(220,38,38,0.4)] relative overflow-hidden border-2 border-red-400/30">
-             <div className="flex items-center gap-5 relative z-10">
-                <div className="bg-white p-4 rounded-3xl text-red-600 shadow-2xl rotate-6"><ShieldCheck size={40} /></div>
-                <div className="flex-1 text-white">
-                  <h4 className="font-black text-2xl italic tracking-tighter leading-tight uppercase">Emergency Active</h4>
-                  <div className="flex items-center gap-2 mt-1.5 text-[10px] font-black uppercase bg-white/20 w-fit px-3 py-1 rounded-full backdrop-blur-md">
-                    <Radio size={12} className="animate-pulse" /> Live Mesh Broadcast On
-                  </div>
-                </div>
-             </div>
-             <Navigation className="absolute -right-10 -bottom-10 opacity-10 rotate-12 text-white" size={180} />
-          </div>
+        </div>
 
-          <div className="bg-slate-900 p-7 rounded-[3.5rem] border border-slate-800 h-[520px] flex flex-col shadow-2xl">
-            <div className="flex items-center gap-3 mb-6 px-2 mt-2">
-               <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500 shadow-sm"><MessageCircle size={18} /></div>
-               <h5 className="text-[11px] font-black uppercase tracking-widest text-slate-500 italic">Security Comms</h5>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto space-y-4 px-2 custom-scrollbar">
-              <div className="bg-blue-600/10 border-2 border-blue-500/10 p-5 rounded-[2rem] text-[11px] text-blue-100 italic leading-relaxed shadow-inner border-dashed">
-                {activeAlert?.message}
+        <div className="space-y-3">
+          {safeSpots.length > 0 ? safeSpots.map((spot, i) => (
+            <a 
+              key={i} href={spot.uri} target="_blank"
+              className="flex items-center justify-between p-4 bg-slate-950/50 border border-white/5 rounded-2xl group hover:border-sky-500/30 transition-all"
+            >
+              <div className="flex items-center gap-4">
+                <div className="bg-slate-800 p-2 rounded-lg text-slate-400 group-hover:text-sky-400">
+                  <MapPin size={16} />
+                </div>
+                <span className="text-xs font-bold text-slate-300">{spot.name}</span>
               </div>
-              {activeAlert?.updates && Object.values(activeAlert.updates).map((msg: any) => (
-                <div key={msg.id} className={`max-w-[88%] p-5 rounded-[2rem] text-[13px] shadow-2xl animate-in zoom-in duration-300 ${msg.senderPhone === user.phone ? 'ml-auto bg-blue-600 text-white rounded-br-none' : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700'}`}>
-                  <div className="flex justify-between items-center mb-1.5 opacity-60 text-[8px] font-black uppercase tracking-widest">
-                    <span>{msg.senderName}</span>
-                    <span>{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                  </div>
-                  <p className="font-medium leading-snug">{msg.text}</p>
-                </div>
-              ))}
-              <div ref={chatEndRef} />
+              <ChevronRight size={16} className="text-slate-600" />
+            </a>
+          )) : (
+            <div className="py-8 text-center text-slate-700">
+              <Zap size={24} className="mx-auto mb-2 opacity-20" />
+              <p className="text-[9px] font-bold uppercase tracking-widest">No mesh path data available</p>
             </div>
-
-            <form onSubmit={sendChatMessage} className="mt-6 flex gap-3 relative">
-              <input 
-                type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} 
-                placeholder="Broadcast status..." 
-                className="grow bg-slate-950 border border-slate-800 rounded-[2rem] py-5 px-7 text-sm text-white font-medium focus:border-blue-500 shadow-inner outline-none transition-all" 
-              />
-              <button type="submit" className="p-5 bg-blue-600 text-white rounded-2xl shadow-xl hover:bg-blue-500 active:scale-95 transition-all">
-                <Send size={24}/>
-              </button>
-            </form>
-          </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 p-7 rounded-[2.5rem] text-red-500 text-[10px] font-black uppercase flex items-center gap-5 animate-bounce shadow-xl">
-          <div className="p-3 bg-red-500/20 rounded-2xl shrink-0"><AlertCircle size={28} /></div>
-          <span className="leading-tight flex-1">{error}</span>
+      <div className="px-4 py-2 flex items-center justify-between mono text-[10px] text-slate-600 bg-slate-950/30 rounded-full border border-white/5">
+        <div className="flex items-center gap-2">
+          <div className={`w-1.5 h-1.5 rounded-full ${coords ? 'bg-green-500' : 'bg-slate-700'}`} />
+          <span>SATELLITE LOCK</span>
         </div>
-      )}
-
-      {!isEmergency && (
-        <div className="grid grid-cols-2 gap-5 pb-8">
-          <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-2xl group hover:border-blue-500/30 transition-all cursor-pointer">
-            <div className="p-4 bg-blue-600/10 rounded-2xl w-fit text-blue-500 group-hover:scale-110 transition-transform"><Users size={32} /></div>
-            <div>
-              <div className="text-5xl font-black text-white italic tracking-tighter leading-none">{registeredContacts.length}</div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-2 block">Mesh Guards</span>
-            </div>
-          </div>
-          <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-2xl group hover:border-blue-500/30 transition-all cursor-pointer">
-            <div className={`p-4 rounded-2xl w-fit ${currentCoords ? 'bg-blue-600/10 text-blue-500 animate-pulse' : 'bg-slate-800 text-slate-700'}`}><MapPin size={32} /></div>
-            <div>
-              <div className="text-xl font-black text-white italic leading-tight tracking-tighter truncate">{currentCoords ? 'Satellite Lock' : 'Locating...'}</div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-2 block">Accuracy: {currentCoords?.accuracy.toFixed(0)}m</span>
-            </div>
-          </div>
-        </div>
-      )}
+        <span>{coords ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}` : 'SCANNING...'}</span>
+      </div>
     </div>
   );
 };

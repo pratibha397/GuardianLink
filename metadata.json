@@ -1,8 +1,10 @@
+
 {
-  "name": "GuardianVoice - Personal Safety App",
-  "description": "A voice-activated safety application that uses Gemini's real-time audio intelligence to detect emergency trigger phrases and notify contacts with your live location.",
+  "name": "Aegis Mesh - AI Safety",
+  "description": "Next-gen personal safety using Gemini Live audio intelligence and real-time mesh networking.",
   "requestFramePermissions": [
     "microphone",
-    "geolocation"
+    "geolocation",
+    "camera"
   ]
 }

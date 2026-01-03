@@ -1,158 +1,82 @@
 
-import { Activity, Home, LogOut, Radio, Settings, Shield } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import { Home, LogOut, Radio, Settings, Shield } from 'lucide-react';
+import React, { useState } from 'react';
 import AlertHistory from './components/AlertHistory';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import SettingsPanel from './components/SettingsPanel';
-import { DataSnapshot, onValue, ref, rtdb } from './services/firebase';
-import { AlertLog, AppSettings, AppView, User } from './types';
-
-const STORAGE_KEY = 'guardian_voice_settings';
-const AUTH_KEY = 'guardian_voice_user';
+import { AppSettings, AppView, User } from './types';
 
 const DEFAULT_SETTINGS: AppSettings = {
-  triggerPhrase: 'I am in danger',
-  messageTemplate: 'URGENT: I need assistance. Tracking location: {location}',
+  triggerPhrase: 'Aegis, help me',
+  checkInDuration: 15,
   contacts: [],
   isListening: false
 };
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [currentView, setCurrentView] = useState<string>('login');
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('aegis_user');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [isEmergencyActive, setIsEmergencyActive] = useState(false);
-  const [incomingAlert, setIncomingAlert] = useState<AlertLog | null>(null);
+  const [isEmergency, setIsEmergency] = useState(false);
 
-  useEffect(() => {
-    const savedUser = localStorage.getItem(AUTH_KEY);
-    if (savedUser) {
-      try { 
-        const parsedUser = JSON.parse(savedUser);
-        setUser(parsedUser);
-        setCurrentView('dashboard');
-      } catch (e) {}
-    }
-
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setSettings((prev) => ({ ...prev, ...parsed, isListening: false }));
-      } catch (e) {}
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    
-    const alertsRef = ref(rtdb, 'alerts');
-    const unsubscribe = onValue(alertsRef, (snapshot: DataSnapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const activeAlerts = Object.values(data) as AlertLog[];
-        const alertForMe = activeAlerts.find(a => 
-          a.recipients?.includes(user.phone) && 
-          a.senderPhone !== user.phone && 
-          a.isLive
-        );
-        setIncomingAlert(alertForMe || null);
-      } else {
-        setIncomingAlert(null);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, isListening: false }));
-    }
-  }, [settings, user]);
-
-  const handleLogout = () => { 
-    localStorage.removeItem(AUTH_KEY); 
-    setUser(null); 
-    setCurrentView('login');
-    setAppView(AppView.DASHBOARD);
+  const handleLogout = () => {
+    localStorage.removeItem('aegis_user');
+    setUser(null);
   };
 
-  const handleLoginSuccess = (u: User) => {
-    setUser(u);
-    localStorage.setItem(AUTH_KEY, JSON.stringify(u));
-    setCurrentView('dashboard');
-  };
-
-  const broadcastAlert = (log: AlertLog) => {
-    setIsEmergencyActive(true);
-  };
-
-  if (currentView === 'login') {
-    return <AuthScreen onLogin={handleLoginSuccess} />;
+  if (!user) {
+    return <AuthScreen onLogin={(u) => { setUser(u); localStorage.setItem('aegis_user', JSON.stringify(u)); }} />;
   }
 
   return (
-    <div className="min-h-screen flex flex-col max-w-md mx-auto bg-slate-950 shadow-2xl relative border-x border-slate-900 text-slate-100 font-sans">
-      <header className="p-6 bg-slate-950/80 backdrop-blur-md border-b border-slate-900 flex justify-between items-center sticky top-0 z-30">
+    <div className="min-h-screen flex flex-col max-w-md mx-auto bg-[#020617] relative text-slate-100 font-sans selection:bg-sky-500/30">
+      <header className="p-6 bg-[#020617]/80 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center border-b border-white/5">
         <div className="flex items-center gap-3">
-          <div className={`p-2.5 rounded-2xl ${isEmergencyActive ? 'bg-blue-600 shadow-[0_0_20px_rgba(37,99,235,0.5)] animate-pulse' : 'bg-slate-900 shadow-inner'}`}>
-            <Shield size={24} className={isEmergencyActive ? 'text-white' : 'text-blue-500'} />
+          <div className={`p-2 rounded-xl ${isEmergency ? 'bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.5)]' : 'bg-slate-900'}`}>
+            <Shield size={20} className={isEmergency ? 'text-white' : 'text-sky-500'} />
           </div>
           <div>
-            <h1 className="font-black text-xl italic tracking-tighter leading-none">Guardian</h1>
-            <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mt-1">{user?.name}</p>
+            <h1 className="font-bold text-lg tracking-tight italic leading-none">AEGIS</h1>
+            <p className="text-[8px] mono text-slate-500 uppercase font-bold tracking-[0.3em] mt-1">Mesh Secure</p>
           </div>
         </div>
-        <button onClick={handleLogout} className="p-2.5 bg-slate-900 rounded-xl text-slate-600 hover:text-red-500 transition-colors"><LogOut size={16} /></button>
+        <button onClick={handleLogout} className="p-2 text-slate-600 hover:text-red-500 transition-colors">
+          <LogOut size={16} />
+        </button>
       </header>
 
-      {incomingAlert && (
-        <div className="mx-6 mt-4 p-4 bg-blue-600 rounded-[2rem] flex items-center justify-between shadow-2xl border border-blue-400/30 animate-in slide-in-from-top-4 duration-500">
-          <div className="flex items-center gap-4">
-            <div className="bg-white/20 p-2 rounded-xl animate-pulse"><Radio size={20} className="text-white" /></div>
-            <div>
-               <p className="text-[10px] text-white/70 font-black uppercase tracking-widest">Incoming Emergency</p>
-               <p className="text-sm text-white font-black">{incomingAlert.senderName}</p>
-            </div>
-          </div>
-          <button onClick={() => setAppView(AppView.GUARDIAN_LINK)} className="bg-white text-blue-600 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg active:scale-95 transition-all">Intercept</button>
-        </div>
-      )}
-
       <main className="flex-1 overflow-y-auto p-6 pb-28">
-        {appView === AppView.DASHBOARD && user && (
+        {appView === AppView.DASHBOARD && (
           <Dashboard 
             user={user} 
             settings={settings} 
-            updateSettings={(s) => setSettings(p => ({...p, ...s}))} 
-            onAlertTriggered={broadcastAlert} 
-            isEmergency={isEmergencyActive} 
+            updateSettings={(s) => setSettings(p => ({...p, ...s}))}
+            isEmergency={isEmergency}
+            onAlert={() => setIsEmergency(true)}
           />
         )}
-        {appView === AppView.SETTINGS && (
-          <SettingsPanel 
-            settings={settings} 
-            updateSettings={(s) => setSettings(p => ({...p, ...s}))} 
-          />
-        )}
-        {appView === AppView.GUARDIAN_LINK && user && (
-          <AlertHistory logs={[]} clearLogs={() => {}} user={user} />
-        )}
+        {appView === AppView.MESH && <AlertHistory user={user} logs={[]} clearLogs={() => {}} />}
+        {appView === AppView.SETTINGS && <SettingsPanel settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} />}
       </main>
 
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-5 bg-slate-950/90 backdrop-blur-xl border-t border-slate-900 z-40">
-        <div className="flex justify-around items-center bg-slate-900/50 p-2 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] to-transparent z-50">
+        <div className="flex justify-around items-center glass p-2 rounded-full border border-white/5 shadow-2xl">
           {[
             { id: AppView.DASHBOARD, icon: Home, label: 'Safety' },
-            { id: AppView.GUARDIAN_LINK, icon: Activity, label: 'Feed' },
-            { id: AppView.SETTINGS, icon: Settings, label: 'Config' }
+            { id: AppView.MESH, icon: Radio, label: 'Feed' },
+            { id: AppView.SETTINGS, icon: Settings, label: 'Mesh' }
           ].map(item => (
-            <button key={item.id} onClick={() => setAppView(item.id)} className={`flex flex-col items-center gap-1.5 px-7 py-3 rounded-3xl transition-all ${appView === item.id ? 'bg-blue-600 text-white shadow-[0_10px_25px_rgba(37,99,235,0.4)]' : 'text-slate-600 hover:text-slate-400'}`}>
-              <item.icon size={20} />
-              <span className="text-[8px] font-black uppercase tracking-widest">{item.label}</span>
+            <button 
+              key={item.id} 
+              onClick={() => setAppView(item.id)} 
+              className={`flex items-center gap-2 px-6 py-3 rounded-full transition-all ${appView === item.id ? 'bg-sky-500 text-white shadow-xl' : 'text-slate-600'}`}
+            >
+              <item.icon size={18} />
+              {appView === item.id && <span className="text-[10px] font-bold uppercase tracking-widest">{item.label}</span>}
             </button>
           ))}
         </div>

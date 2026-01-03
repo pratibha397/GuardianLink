@@ -1,150 +1,110 @@
 
 import { Blob, FunctionDeclaration, GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
 
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
+  for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
 }
 
-const triggerAlertFunction: FunctionDeclaration = {
-  name: 'triggerEmergencyAlert',
+const triggerAlertFunc: FunctionDeclaration = {
+  name: 'triggerSOS',
   parameters: {
     type: Type.OBJECT,
-    description: 'Call this function immediately when you detect the user saying the specific trigger phrase indicating danger.',
-    properties: {
-      detectedPhrase: {
-        type: Type.STRING,
-        description: 'The phrase that was detected which triggered the alert.'
-      }
-    },
-    required: ['detectedPhrase']
+    description: 'Call this if the user says the emergency phrase or sounds in immediate distress.',
+    properties: { phrase: { type: Type.STRING } },
+    required: ['phrase']
   }
 };
 
-interface LiveSessionOptions {
+const triggerFakeCallFunc: FunctionDeclaration = {
+  name: 'triggerFakeCall',
+  parameters: {
+    type: Type.OBJECT,
+    description: 'Call this if the user asks to be called or wants an excuse to leave.',
+    properties: { delaySeconds: { type: Type.NUMBER } }
+  }
+};
+
+interface MonitorOptions {
   triggerPhrase: string;
-  onAlert: (phrase: string) => void;
-  onError: (error: string) => void;
+  onAlert: (p: string) => void;
+  onFakeCall: () => void;
+  onError: () => void;
 }
 
 export class GeminiVoiceMonitor {
   private sessionPromise: Promise<any> | null = null;
-  private inputAudioContext: AudioContext | null = null;
+  private ctx: AudioContext | null = null;
   private stream: MediaStream | null = null;
-  private scriptProcessor: ScriptProcessorNode | null = null;
-  private isActive: boolean = false;
 
-  constructor(private options: LiveSessionOptions) {}
+  constructor(private options: MonitorOptions) {}
 
   async start() {
     try {
-      this.isActive = true;
-      if (!process.env.API_KEY) throw new Error('API Key missing.');
-
+      if (!process.env.API_KEY) throw new Error('API Key Required');
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       
-      this.inputAudioContext.onstatechange = () => {
-        if (this.isActive && this.inputAudioContext?.state === 'suspended') {
-          this.inputAudioContext?.resume();
-        }
-      };
-
+      this.ctx = new AudioContext({ sampleRate: 16000 });
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
+      
       this.sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         callbacks: {
-          onopen: () => {
-            this.setupMicrophone();
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            // FIX TS18048: Using optional chaining on toolCall to prevent undefined errors
-            const functionCalls = message.toolCall?.functionCalls;
-            if (functionCalls) {
-              for (const fc of functionCalls) {
-                if (fc.name === 'triggerEmergencyAlert') {
-                  this.options.onAlert((fc.args as any).detectedPhrase);
-                  this.sessionPromise?.then(session => {
-                    session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: { result: "Emergency verified. Link active." },
-                      }
-                    });
-                  });
-                }
+          onopen: () => this.startStreaming(),
+          onmessage: async (msg: LiveServerMessage) => {
+            const calls = msg.toolCall?.functionCalls;
+            if (calls) {
+              for (const fc of calls) {
+                if (fc.name === 'triggerSOS') this.options.onAlert((fc.args as any).phrase);
+                if (fc.name === 'triggerFakeCall') this.options.onFakeCall();
+                
+                this.sessionPromise?.then(s => s.sendToolResponse({
+                  functionResponses: { id: fc.id, name: fc.name, response: { result: "ok" } }
+                }));
               }
             }
           },
-          onerror: (e: any) => {
-            console.error('Monitor Error:', e);
-            if (this.isActive) this.options.onError('Guardian AI connection lost.');
-          },
-          onclose: () => {
-            console.log('Monitor session closed.');
-          }
+          onerror: () => this.options.onError()
         },
         config: {
           responseModalities: [Modality.AUDIO],
-          tools: [{ functionDeclarations: [triggerAlertFunction] }],
-          systemInstruction: `You are a SILENT safety engine. 
-          NEVER speak. NEVER reply to conversations. 
-          Your ONLY job is to monitor audio and call 'triggerEmergencyAlert' ONLY if you hear the phrase: "${this.options.triggerPhrase}". 
-          Remain 100% silent at all times.`,
+          tools: [{ functionDeclarations: [triggerAlertFunc, triggerFakeCallFunc] }],
+          systemInstruction: `You are Aegis, a stealth safety AI. 
+          1. Call triggerSOS if you hear "${this.options.triggerPhrase}" or clear distress.
+          2. Call triggerFakeCall if the user says something like "Aegis, call me" or "I need a call".
+          Stay silent. Do not speak back.`
         }
       });
-    } catch (err: any) {
-      this.options.onError(err.message);
+    } catch (e) {
+      console.error(e);
+      this.options.onError();
     }
   }
 
-  private setupMicrophone() {
-    if (!this.inputAudioContext || !this.stream) return;
-    const source = this.inputAudioContext.createMediaStreamSource(this.stream);
-    this.scriptProcessor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
-    this.scriptProcessor.onaudioprocess = (event) => {
-      if (this.inputAudioContext?.state === 'suspended') {
-        this.inputAudioContext.resume();
-      }
-
-      const inputData = event.inputBuffer.getChannelData(0);
-      const l = inputData.length;
-      const int16 = new Int16Array(l);
-      for (let i = 0; i < l; i++) int16[i] = inputData[i] * 32768;
-      const pcmBlob: Blob = {
+  private startStreaming() {
+    if (!this.ctx || !this.stream) return;
+    const source = this.ctx.createMediaStreamSource(this.stream);
+    const processor = this.ctx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (e) => {
+      const data = e.inputBuffer.getChannelData(0);
+      const int16 = new Int16Array(data.length);
+      for (let i = 0; i < data.length; i++) int16[i] = data[i] * 32768;
+      
+      const blob: Blob = {
         data: encode(new Uint8Array(int16.buffer)),
-        mimeType: 'audio/pcm;rate=16000',
+        mimeType: 'audio/pcm;rate=16000'
       };
-      this.sessionPromise?.then((session) => {
-        session.sendRealtimeInput({ media: pcmBlob });
-      });
+      this.sessionPromise?.then(s => s.sendRealtimeInput({ media: blob }));
     };
-    source.connect(this.scriptProcessor);
-    this.scriptProcessor.connect(this.inputAudioContext.destination);
+    source.connect(processor);
+    processor.connect(this.ctx.destination);
   }
 
   async stop() {
-    this.isActive = false;
-    if (this.scriptProcessor) this.scriptProcessor.disconnect();
-    if (this.stream) this.stream.getTracks().forEach(track => track.stop());
-    if (this.inputAudioContext && this.inputAudioContext.state !== 'closed') await this.inputAudioContext.close();
-    this.sessionPromise?.then(session => session.close());
-    this.sessionPromise = null;
+    this.stream?.getTracks().forEach(t => t.stop());
+    await this.ctx?.close();
+    this.sessionPromise?.then(s => s.close());
   }
 }
