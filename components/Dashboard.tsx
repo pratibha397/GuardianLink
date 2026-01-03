@@ -1,6 +1,7 @@
 
-import { MapPin, Power, Radio, Send, ShieldCheck, Users } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
+// Added AlertCircle to imports
+import { AlertCircle, MapPin, Power, Radio, Send, ShieldCheck, Users } from 'lucide-react';
 import { GeminiVoiceMonitor } from '../services/geminiService';
 import { AlertLog, AppSettings, User as AppUser, ChatMessage } from '../types';
 
@@ -12,6 +13,8 @@ interface DashboardProps {
   isEmergency: boolean;
 }
 
+const GLOBAL_ALERTS_KEY = 'guardian_voice_global_alerts';
+
 const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, onAlertTriggered, isEmergency }) => {
   const [currentCoords, setCurrentCoords] = useState<{lat: number, lng: number} | null>(null);
   const [chatMessage, setChatMessage] = useState('');
@@ -20,31 +23,42 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
   const watchIdRef = useRef<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Requirement: Only registered app users receive the message
   const registeredContacts = settings.contacts.filter(c => c.isRegisteredUser);
 
-  // Sync with global alert state to get guardian replies
+  // SYNC LOOP: Get responses from guardians on the same app
   useEffect(() => {
     if (!isEmergency) {
       setActiveAlert(null);
       return;
     }
 
-    const interval = setInterval(() => {
-      const all: AlertLog[] = JSON.parse(localStorage.getItem('guardian_voice_global_alerts') || '[]');
+    const syncWithServer = () => {
+      const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
       const mine = all.find(a => a.senderPhone === user.phone && a.isLive);
       if (mine) setActiveAlert(mine);
-    }, 2000);
+    };
 
+    const interval = setInterval(syncWithServer, 2000);
     return () => clearInterval(interval);
   }, [isEmergency, user.phone]);
 
+  // BROADCAST LOOP: Push live location to the app network
   useEffect(() => {
     if (settings.isListening || isEmergency) {
       watchIdRef.current = navigator.geolocation.watchPosition(
         (pos) => {
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setCurrentCoords(coords);
-          if (isEmergency) updateGlobalLocation(coords);
+          if (isEmergency) {
+            // Update the global alert entry with the latest coordinates for guardians to see
+            const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
+            const idx = all.findIndex(a => a.senderPhone === user.phone && a.isLive);
+            if (idx !== -1) {
+              all[idx].location = coords;
+              localStorage.setItem(GLOBAL_ALERTS_KEY, JSON.stringify(all));
+            }
+          }
         },
         null,
         { enableHighAccuracy: true }
@@ -53,21 +67,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
     }
     return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
-  }, [settings.isListening, isEmergency]);
+  }, [settings.isListening, isEmergency, user.phone]);
 
-  const updateGlobalLocation = (coords: {lat: number, lng: number}) => {
-    const GLOBAL_KEY = 'guardian_voice_global_alerts';
-    const alerts: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_KEY) || '[]');
-    const idx = alerts.findIndex(a => a.senderPhone === user.phone && a.isLive);
-    if (idx !== -1) {
-      alerts[idx].location = coords;
-      localStorage.setItem(GLOBAL_KEY, JSON.stringify(alerts));
-    }
-  };
-
-  const triggerAlert = (initialMsg?: string) => {
+  const triggerAlert = () => {
     if (registeredContacts.length === 0) {
-      setError("No registered guardians found. Update settings.");
+      setError("Alert Aborted: You have no 'App Registered' guardians. Please add one in Setup.");
       return;
     }
 
@@ -77,7 +81,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       senderName: user.name,
       timestamp: Date.now(),
       location: currentCoords,
-      message: initialMsg || "DANGER: Trigger detected. Tracking live now.",
+      message: "EMERGENCY: Situation detected. Live location link established.",
       updates: [],
       isLive: true,
       recipients: registeredContacts.map(c => c.phone)
@@ -85,14 +89,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
     onAlertTriggered(newLog);
     setActiveAlert(newLog);
+    setError(null);
   };
 
   const sendChatMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatMessage.trim() || !activeAlert) return;
 
-    const GLOBAL_KEY = 'guardian_voice_global_alerts';
-    const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_KEY) || '[]');
+    const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
     const idx = all.findIndex(a => a.id === activeAlert.id);
     
     if (idx !== -1) {
@@ -103,7 +107,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         timestamp: Date.now()
       };
       all[idx].updates.push(msg);
-      localStorage.setItem(GLOBAL_KEY, JSON.stringify(all));
+      localStorage.setItem(GLOBAL_ALERTS_KEY, JSON.stringify(all));
       setChatMessage('');
     }
   };
@@ -130,65 +134,85 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
     <div className="space-y-6">
       {!isEmergency ? (
         <div className={`p-10 rounded-[3rem] flex flex-col items-center justify-center transition-all duration-700 border-2 ${settings.isListening ? 'bg-blue-600/10 border-blue-500/50 shadow-[0_0_80px_rgba(37,99,235,0.2)]' : 'bg-slate-900 border-slate-800'}`}>
-          <button onClick={toggleListening} className={`w-32 h-32 rounded-full flex items-center justify-center transition-all active:scale-90 relative ${settings.isListening ? 'bg-blue-600' : 'bg-slate-800'}`}>
+          <button onClick={toggleListening} className={`w-32 h-32 rounded-full flex items-center justify-center transition-all active:scale-90 relative ${settings.isListening ? 'bg-blue-600' : 'bg-slate-800 shadow-inner'}`}>
             {settings.isListening && <div className="absolute inset-0 rounded-full animate-ping bg-blue-500/20" />}
             <Power size={56} className={settings.isListening ? 'text-white' : 'text-slate-600'} />
           </button>
-          <div className="mt-8 text-center">
-            <h2 className="text-2xl font-black text-white italic">{settings.isListening ? 'Monitoring Link' : 'Offline'}</h2>
-            <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-2">AI Analyzing Audio Stream</p>
+          <div className="mt-8 text-center space-y-1">
+            <h2 className="text-2xl font-black text-white italic tracking-tighter">
+              {settings.isListening ? 'Guardian Linked' : 'System Paused'}
+            </h2>
+            <div className="flex items-center gap-2 justify-center">
+              {settings.isListening && <Radio size={14} className="text-blue-500 animate-pulse" />}
+              <p className="text-slate-500 text-[9px] font-black uppercase tracking-widest italic">
+                {settings.isListening ? `Broadcasting on: "${settings.triggerPhrase}"` : 'AI Passive Mode'}
+              </p>
+            </div>
           </div>
         </div>
       ) : (
         <div className="space-y-4 animate-in zoom-in duration-500">
-          <div className="bg-blue-700 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden">
+          <div className="bg-blue-700 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden border border-blue-400/50">
              <div className="flex items-center gap-4">
-                <div className="bg-white p-2 rounded-2xl text-blue-700"><ShieldCheck size={28} /></div>
+                <div className="bg-white p-2 rounded-2xl text-blue-700 shadow-xl"><ShieldCheck size={28} /></div>
                 <div>
-                  <h4 className="font-black text-white">Live Crisis Link</h4>
-                  <div className="flex items-center gap-2 text-[10px] text-blue-100 font-black uppercase"><Radio size={12} className="animate-pulse" /> Registered Guardians Linked</div>
+                  <h4 className="font-black text-white leading-tight">Live Broadcast Hub</h4>
+                  <div className="flex items-center gap-2 text-[9px] text-blue-100 font-black uppercase tracking-wider">
+                    <Radio size={12} className="animate-pulse" /> Network Active • {registeredContacts.length} Guards
+                  </div>
                 </div>
              </div>
           </div>
 
-          <div className="bg-slate-900 p-6 rounded-[2.5rem] border border-slate-800 h-[350px] flex flex-col">
+          <div className="bg-slate-900 p-6 rounded-[2.5rem] border border-slate-800 h-[380px] flex flex-col shadow-inner">
             <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
               <div className="bg-blue-600/10 border border-blue-500/20 p-4 rounded-2xl text-xs text-blue-100 italic">
                 {activeAlert?.message}
               </div>
               {activeAlert?.updates.map(msg => (
-                <div key={msg.id} className={`max-w-[85%] p-4 rounded-2xl text-xs ${msg.senderName === user.name ? 'ml-auto bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 border border-slate-700'}`}>
-                  <div className="font-black uppercase text-[8px] mb-1 opacity-70">{msg.senderName}</div>
+                <div key={msg.id} className={`max-w-[85%] p-4 rounded-2xl text-[11px] leading-relaxed ${msg.senderName === user.name ? 'ml-auto bg-blue-600 text-white shadow-lg' : 'bg-slate-800 text-slate-300 border border-slate-700'}`}>
+                  <div className="font-black uppercase text-[8px] mb-1 opacity-70 tracking-widest">{msg.senderName}</div>
                   {msg.text}
                 </div>
               ))}
             </div>
-            <form onSubmit={sendChatMessage} className="mt-4 flex gap-2">
-              <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} placeholder="Type update..." className="grow bg-slate-950 border border-slate-800 rounded-xl py-3 px-4 text-xs text-white focus:outline-none" />
-              <button type="submit" className="p-3 bg-blue-600 text-white rounded-xl shadow-lg"><Send size={18}/></button>
+            <form onSubmit={sendChatMessage} className="mt-4 relative group">
+              <input 
+                type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} 
+                placeholder="Broadcast update..." 
+                className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-4 pl-5 pr-14 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30" 
+              />
+              <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-500">
+                <Send size={18}/>
+              </button>
             </form>
           </div>
         </div>
       )}
 
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 p-5 rounded-[2rem] text-red-500 text-[10px] font-black uppercase flex items-center gap-3">
+          <AlertCircle size={24} className="shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-slate-900 p-5 rounded-3xl border border-slate-800 h-32 flex flex-col justify-between">
+        <div className="bg-slate-900 p-6 rounded-[2.5rem] border border-slate-800 h-36 flex flex-col justify-between shadow-xl">
           <Users size={20} className="text-blue-500" />
           <div>
-            <div className="text-2xl font-black text-white">{registeredContacts.length}</div>
-            <span className="text-[10px] font-black text-slate-500 uppercase">Linked Guards</span>
+            <div className="text-3xl font-black text-white italic">{registeredContacts.length}</div>
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Network Linked</span>
           </div>
         </div>
-        <div className="bg-slate-900 p-5 rounded-3xl border border-slate-800 h-32 flex flex-col justify-between">
-          <MapPin size={20} className={currentCoords ? 'text-green-500' : 'text-slate-600'} />
+        <div className="bg-slate-900 p-6 rounded-[2.5rem] border border-slate-800 h-36 flex flex-col justify-between shadow-xl">
+          <MapPin size={20} className={currentCoords ? 'text-blue-500 animate-pulse' : 'text-slate-700'} />
           <div>
-            <div className="text-lg font-black text-white">{currentCoords ? 'Active' : 'Offline'}</div>
-            <span className="text-[10px] font-black text-slate-500 uppercase">Live GPS</span>
+            <div className="text-lg font-black text-white italic">{currentCoords ? 'Live Stream' : 'GPS Offline'}</div>
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Packet Tracking</span>
           </div>
         </div>
       </div>
-
-      {error && <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl text-red-500 text-xs font-bold text-center">{error}</div>}
     </div>
   );
 };
