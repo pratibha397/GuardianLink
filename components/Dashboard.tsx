@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import {
   Activity,
@@ -11,20 +10,20 @@ import {
   Zap
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { ref, rtdb, set } from '../services/firebase';
 import { GeminiVoiceMonitor } from '../services/geminiService';
-import { AlertLog, AppSettings, GuardianCoords, SafeSpot, User } from '../types';
+import { AlertLog, AppSettings, User as AppUser, GuardianCoords, SafeSpot } from '../types';
 
 interface DashboardProps {
-  user: User;
+  user: AppUser;
   settings: AppSettings;
   updateSettings: (s: Partial<AppSettings>) => void;
   isEmergency: boolean;
   onAlert: (log: AlertLog) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, isEmergency, onAlert }) => {
+  const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, isEmergency, onAlert }) => {
   const [coords, setCoords] = useState<GuardianCoords | null>(null);
   const [timerActive, setTimerActive] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
@@ -46,9 +45,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
   useEffect(() => {
     if (settings.isListening || isEmergency) {
+      // Fix: Explicitly typed parameters for the callback functions
       watchIdRef.current = startLocationWatch(
-        (c: GuardianCoords) => setCoords(c),
-        (err: string) => console.error("[Aegis GPS]", err)
+        (c: GuardianCoords) => {
+          setCoords(c);
+        },
+        (err: string) => {
+          console.error("[Aegis GPS] Signal Error:", err);
+        }
       );
     } else {
       if (watchIdRef.current !== -1) {
@@ -61,7 +65,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
   const toggleGuard = async () => {
     if (settings.isListening) {
-      await monitorRef.current?.stop();
+      if (monitorRef.current) await monitorRef.current.stop();
       monitorRef.current = null;
       updateSettings({ isListening: false });
     } else {
@@ -102,7 +106,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `I am at ${coords.lat}, ${coords.lng}. List nearest police stations or 24/7 hospitals for safety.`,
+        contents: `I am at lat: ${coords.lat}, lng: ${coords.lng}. List nearest police stations or 24/7 safe hospitals for immediate safety.`,
         config: {
           tools: [{ googleMaps: {} }],
           toolConfig: { retrievalConfig: { latLng: { latitude: coords.lat, longitude: coords.lng } } }
@@ -119,7 +123,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       
       setSafeSpots(spots.slice(0, 3));
     } catch (e) {
-      console.error(e);
+      console.error("[SafeSpots] Grounding Failed:", e);
     } finally {
       setIsSearching(false);
     }
@@ -160,7 +164,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
             if (timerActive) setTimerActive(false);
             else { setTimerActive(true); setTimeLeft(settings.checkInDuration * 60); }
           }}
-          className={`glass p-5 rounded-[2rem] border transition-all ${timerActive ? 'border-sky-500/50 bg-sky-500/5' : 'border-white/5'}`}
+          className={`glass p-5 rounded-[2rem] border transition-all cursor-pointer ${timerActive ? 'border-sky-500/50 bg-sky-500/5' : 'border-white/5'}`}
         >
           <div className="flex justify-between items-start mb-4">
             <div className={`p-2.5 rounded-xl ${timerActive ? 'bg-sky-500 text-white' : 'bg-slate-800 text-slate-500'}`}>
@@ -174,13 +178,13 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
           </div>
         </div>
 
-        <div onClick={() => triggerSOS("Manual SOS Tap")} className="bg-red-950/40 border border-red-500/20 p-5 rounded-[2rem] flex flex-col justify-between active:scale-95 transition-transform">
+        <div onClick={() => triggerSOS("Manual SOS Tap")} className="bg-red-950/40 border border-red-500/20 p-5 rounded-[2rem] flex flex-col justify-between active:scale-95 transition-transform cursor-pointer">
           <div className="p-2.5 bg-red-600 rounded-xl w-fit text-white shadow-lg">
             <ShieldAlert size={20} />
           </div>
           <div>
             <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Instant</p>
-            <div className="text-xl font-bold italic tracking-tighter text-white">PANIC SOS</div>
+            <div className="text-xl font-bold italic tracking-tighter text-white uppercase">Panic SOS</div>
           </div>
         </div>
       </div>
@@ -205,7 +209,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
         <div className="space-y-3">
           {safeSpots.length > 0 ? safeSpots.map((spot, i) => (
             <a 
-              key={i} href={spot.uri} target="_blank"
+              key={i} href={spot.uri} target="_blank" rel="noopener noreferrer"
               className="flex items-center justify-between p-4 bg-slate-950/50 border border-white/5 rounded-2xl group hover:border-sky-500/30 transition-all"
             >
               <div className="flex items-center gap-4">
