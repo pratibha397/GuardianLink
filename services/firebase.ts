@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword
 } from "firebase/auth";
 import { DataSnapshot, getDatabase, onValue, push, ref, set, update } from "firebase/database";
@@ -21,7 +22,7 @@ const firebaseConfig = {
 
 if (!firebaseConfig.apiKey || !firebaseConfig.projectId || !firebaseConfig.appId) {
   console.error(
-    "[Aegis Mesh] CRITICAL: Firebase configuration is missing essential keys."
+    "[GuardianLink] CRITICAL: Firebase configuration is missing essential keys."
   );
 }
 
@@ -33,8 +34,7 @@ export const rtdb = getDatabase(app);
 
 // Auth Exports (Email/Password for Free Tier)
 export {
-  createUserWithEmailAndPassword,
-  onAuthStateChanged, signInWithEmailAndPassword
+  createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword
 };
 
 // Firestore Exports

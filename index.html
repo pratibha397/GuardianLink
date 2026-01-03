@@ -4,34 +4,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Aegis Mesh | Tactical AI Safety</title>
+  <title>GuardianLink | Personal Safety Network</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --neon-blue: #38bdf8;
+      --primary: #2563eb;
       --bg-dark: #020617;
     }
     body {
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: 'Plus Jakarta Sans', sans-serif;
       background-color: var(--bg-dark);
       color: #f8fafc;
       overflow-x: hidden;
     }
     .mono { font-family: 'JetBrains Mono', monospace; }
     .glass {
-      background: rgba(15, 23, 42, 0.6);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
     .neural-ring {
       position: relative;
       width: 180px;
       height: 180px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(56, 189, 248, 0.1) 0%, transparent 70%);
+      background: radial-gradient(circle, rgba(37, 99, 235, 0.1) 0%, transparent 70%);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -39,13 +39,20 @@
     .ring-layer {
       position: absolute;
       border-radius: 50%;
-      border: 1px solid rgba(56, 189, 248, 0.2);
+      border: 1px solid rgba(37, 99, 235, 0.2);
       animation: pulse-ring 4s infinite linear;
     }
     @keyframes pulse-ring {
       0% { transform: scale(0.8); opacity: 0; }
       50% { opacity: 0.5; }
       100% { transform: scale(1.5); opacity: 0; }
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover, 
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: white;
+      -webkit-box-shadow: 0 0 0px 1000px #0f172a inset;
+      transition: background-color 5000s ease-in-out 0s;
     }
   </style>
   <script type="importmap">
@@ -69,7 +76,6 @@
 </head>
 <body>
   <div id="root"></div>
-  <!-- Using relative path './' instead of '/' to prevent 404s on certain hosts -->
   <script type="module" src="./index.tsx"></script>
 </body>
 </html>
