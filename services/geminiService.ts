@@ -73,7 +73,7 @@ export class GeminiVoiceMonitor {
             this.setupMicrophone();
           },
           onmessage: async (message: LiveServerMessage) => {
-            // FIX TS18048: Using optional chaining on toolCall
+            // FIX TS18048: Using optional chaining on toolCall to prevent undefined errors
             const functionCalls = message.toolCall?.functionCalls;
             if (functionCalls) {
               for (const fc of functionCalls) {

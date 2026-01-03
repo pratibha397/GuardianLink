@@ -1,10 +1,9 @@
-
 /**
- * Senior Architect Location Service
- * Optimized for high-frequency emergency tracking.
+ * High-performance Location Service for GuardianVoice.
+ * Optimized for emergency tracking with high accuracy.
  */
 
-export interface LocationCoords {
+export interface Coordinates {
   lat: number;
   lng: number;
   accuracy: number;
@@ -13,31 +12,33 @@ export interface LocationCoords {
   timestamp: number;
 }
 
-export type LocationSuccessCallback = (coords: LocationCoords) => void;
+export type LocationSuccessCallback = (coords: Coordinates) => void;
 export type LocationErrorCallback = (message: string) => void;
 
 /**
- * Starts high-frequency geolocation tracking.
- * @returns watchId to be used for stopping tracking.
+ * Starts watching the user's location with high accuracy.
+ * @param onUpdate - Callback triggered on location change.
+ * @param onError - Callback triggered on GPS failure.
+ * @returns watchId - ID for clearing the watch.
  */
-export function startLocationTracking(
-  onSuccess: LocationSuccessCallback,
+export function startLocationWatch(
+  onUpdate: LocationSuccessCallback,
   onError: LocationErrorCallback
 ): number {
   if (!navigator.geolocation) {
-    onError("Hardware Error: Your device does not support GPS tracking.");
+    onError("Hardware Error: GPS is not supported by this device.");
     return -1;
   }
 
   const options: PositionOptions = {
     enableHighAccuracy: true,
-    timeout: 5000,
+    timeout: 10000,
     maximumAge: 0
   };
 
   const watchId = navigator.geolocation.watchPosition(
     (position) => {
-      onSuccess({
+      onUpdate({
         lat: position.coords.latitude,
         lng: position.coords.longitude,
         accuracy: position.coords.accuracy,
@@ -47,10 +48,18 @@ export function startLocationTracking(
       });
     },
     (error) => {
-      let msg = "GPS Error";
-      if (error.code === error.PERMISSION_DENIED) msg = "Location permission denied.";
-      else if (error.code === error.POSITION_UNAVAILABLE) msg = "GPS signal lost.";
-      else if (error.code === error.TIMEOUT) msg = "GPS search timed out.";
+      let msg = "GPS Signal Error";
+      switch (error.code) {
+        case error.PERMISSION_DENIED:
+          msg = "Permission Denied: Please enable location access.";
+          break;
+        case error.POSITION_UNAVAILABLE:
+          msg = "Signal Lost: GPS position is currently unavailable.";
+          break;
+        case error.TIMEOUT:
+          msg = "GPS Timeout: Request for location timed out.";
+          break;
+      }
       onError(msg);
     },
     options
@@ -59,7 +68,11 @@ export function startLocationTracking(
   return watchId;
 }
 
-export function stopLocationTracking(watchId: number) {
+/**
+ * Stops an active location watch.
+ * @param watchId - The ID returned by startLocationWatch.
+ */
+export function stopLocationWatch(watchId: number): void {
   if (watchId !== -1) {
     navigator.geolocation.clearWatch(watchId);
   }

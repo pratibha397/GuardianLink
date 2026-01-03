@@ -1,7 +1,6 @@
-
 import { AlertCircle, Lock, MapPin, MessageCircle, Navigation, Power, Radio, Send, ShieldAlert, ShieldCheck, Unlock, Users } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { LocationCoords, startLocationTracking, stopLocationTracking } from '../services/LocationService';
+import { Coordinates, startLocationWatch, stopLocationWatch } from '../services/LocationService';
 import { DataSnapshot, onValue, push, ref, rtdb, set, update } from '../services/firebase';
 import { GeminiVoiceMonitor } from '../services/geminiService';
 import { AlertLog, AppSettings, User as AppUser, ChatMessage } from '../types';
@@ -15,7 +14,7 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, onAlertTriggered, isEmergency }) => {
-  const [currentCoords, setCurrentCoords] = useState<LocationCoords | null>(null);
+  const [currentCoords, setCurrentCoords] = useState<Coordinates | null>(null);
   const [chatMessage, setChatMessage] = useState('');
   const [activeAlert, setActiveAlert] = useState<AlertLog | null>(null);
   const [wakeLock, setWakeLock] = useState<any>(null);
@@ -24,12 +23,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
   const [error, setError] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
-  // Web Speech API Fallback
   const recognitionRef = useRef<any>(null);
 
   const registeredContacts = settings.contacts.filter(c => c.isRegisteredUser);
 
-  // Hybrid Voice Detection: Web Speech API for "HELP"
   useEffect(() => {
     if (settings.isListening && !isEmergency) {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -93,9 +90,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
   useEffect(() => {
     if (settings.isListening || isEmergency) {
-      // FIX TS7006: Explicitly typing the parameters
-      watchIdRef.current = startLocationTracking(
-        (coords: LocationCoords) => {
+      watchIdRef.current = startLocationWatch(
+        (coords: Coordinates) => {
           setCurrentCoords(coords);
           setError(null);
           
@@ -103,7 +99,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
             update(ref(rtdb, `alerts/${activeAlert.id}`), {
               location: { lat: coords.lat, lng: coords.lng }
             });
-            // Update live_locations node for simpler dashboard tracking
             set(ref(rtdb, `live_locations/${user.id}`), {
               lat: coords.lat,
               lng: coords.lng,
@@ -114,10 +109,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         (errMessage: string) => setError(errMessage)
       );
     } else {
-      stopLocationTracking(watchIdRef.current);
+      stopLocationWatch(watchIdRef.current);
       watchIdRef.current = -1;
     }
-    return () => stopLocationTracking(watchIdRef.current);
+    return () => stopLocationWatch(watchIdRef.current);
   }, [settings.isListening, isEmergency, user.phone, activeAlert]);
 
   const triggerAlert = async (manual = false) => {

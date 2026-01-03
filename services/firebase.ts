@@ -1,4 +1,3 @@
-
 import { initializeApp } from "firebase/app";
 import { getAuth, RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { DataSnapshot, getDatabase, onValue, push, ref, set, update } from "firebase/database";
@@ -26,9 +25,9 @@ export const rtdb = getDatabase(app);
 export { RecaptchaVerifier, signInWithPhoneNumber };
 
 // Firestore Exports
-    export { collection, doc, getDoc, getDocs, query, setDoc, where };
+  export { collection, doc, getDoc, getDocs, query, setDoc, where };
 
 // Database Exports
-    export { onValue, push, ref, set, update };
-    export type { DataSnapshot };
+  export { onValue, push, ref, set, update };
+  export type { DataSnapshot };
 
