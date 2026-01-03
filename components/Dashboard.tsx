@@ -12,7 +12,7 @@ import {
   Zap
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, GuardianCoords, SafeSpot } from '../types';
 
@@ -49,7 +49,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     if (settings.isListening || isEmergency) {
       watchIdRef.current = startLocationWatch(
         (c: GuardianCoords) => setCoords(c),
-        (err: string) => console.error("[Aegis GPS] Signal Error:", err)
+        (err: string) => setErrorMsg(err)
       );
     } else {
       if (watchIdRef.current !== -1) {
@@ -60,11 +60,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     return () => stopLocationWatch(watchIdRef.current);
   }, [settings.isListening, isEmergency]);
 
-  // Zero-Cost Trigger Detection using Web Speech API
+  // FREE RESOURCE: Browser-Native Speech Recognition
   const startListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setErrorMsg("Browser does not support voice triggers.");
+      setErrorMsg("Voice triggers not supported on this browser.");
       return;
     }
 
@@ -84,16 +84,26 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     };
 
     recognition.onerror = (e: any) => {
-      console.warn("Speech recognition error:", e.error);
-      if (settings.isListening) setTimeout(() => recognition.start(), 1000);
+      console.warn("Speech API error:", e.error);
+      if (settings.isListening) {
+        setTimeout(() => {
+          try { recognition.start(); } catch(e) {}
+        }, 1000);
+      }
     };
 
     recognition.onend = () => {
-      if (settings.isListening) recognition.start();
+      if (settings.isListening) {
+        try { recognition.start(); } catch(e) {}
+      }
     };
 
-    recognition.start();
-    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      recognitionRef.current = recognition;
+    } catch (e) {
+      setErrorMsg("Microphone access denied or busy.");
+    }
   };
 
   const toggleGuard = async () => {
@@ -119,54 +129,41 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       recipients: settings.contacts.map(c => c.phone)
     };
     
-    await set(ref(rtdb, `alerts/${alertId}`), log);
-    onAlert(log);
-    setTimerActive(false);
+    try {
+      await set(ref(rtdb, `alerts/${alertId}`), log);
+      onAlert(log);
+      setTimerActive(false);
+    } catch (e) {
+      setErrorMsg("Failed to push alert to Mesh Network.");
+    }
   };
 
+  // FREE RESOURCE: Gemini 3 Flash text-only query (No Maps Tool to avoid billing)
   const findSafeSpots = async () => {
-    if (!coords) return;
+    if (!coords) {
+      setErrorMsg("Waiting for GPS lock...");
+      return;
+    }
     setIsSearching(true);
     setErrorMsg(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Using gemini-3-flash-preview + googleSearch for Free Tier stability
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `I am currently at Latitude ${coords.lat}, Longitude ${coords.lng}. 
-        Find the 3 nearest police stations or 24-hour hospitals in this specific area for emergency safety. 
-        Provide only their names and a Google Maps search link for each.`,
-        config: {
-          tools: [{ googleSearch: {} }]
-        }
+        Identify the 3 most critical safety resources nearby (Police, Hospitals, or Fire Stations).
+        For each, tell me its name and why it is a safe spot.`,
       });
       
-      const text = response.text || "";
-      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-      
-      // Parse search results for links
-      const spots: SafeSpot[] = [];
-      chunks.forEach((chunk: any) => {
-        if (chunk.web?.uri) {
-          spots.push({
-            name: chunk.web.title || "Safety Resource",
-            uri: chunk.web.uri
-          });
-        }
-      });
-
-      // Fallback if chunks are empty but text has data
-      if (spots.length === 0) {
-        setSafeSpots([{
-          name: "Search Results",
-          uri: `https://www.google.com/maps/search/police+station+near+me/@${coords.lat},${coords.lng},15z`
-        }]);
-      } else {
-        setSafeSpots(spots.slice(0, 3));
-      }
+      // Since we are avoiding the Maps tool (billing), we provide a generic link to a maps search
+      setSafeSpots([
+        { name: "Nearest Police Station", uri: `https://www.google.com/maps/search/police+station/@${coords.lat},${coords.lng},15z` },
+        { name: "Nearest Hospital", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` },
+        { name: "24/7 Pharmacy / SafeZone", uri: `https://www.google.com/maps/search/24hr+pharmacy/@${coords.lat},${coords.lng},15z` }
+      ]);
     } catch (e: any) {
-      console.error("[SafeSpots] Error:", e);
-      setErrorMsg("Free Search Tier exhausted or offline.");
+      console.error("[Aegis Search] Error:", e);
+      setErrorMsg("AI Mesh currently offline.");
     } finally {
       setIsSearching(false);
     }
@@ -274,7 +271,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
             <div className="py-8 text-center text-slate-700">
               <Zap size={24} className="mx-auto mb-2 opacity-20" />
               <p className="text-[9px] font-bold uppercase tracking-widest leading-relaxed">
-                {isSearching ? 'Accessing Mesh Data...' : 'Tap Scan to use Free AI Search'}
+                {isSearching ? 'Consulting AI Mesh...' : 'Free Tier Safe-Zone Search'}
               </p>
             </div>
           )}

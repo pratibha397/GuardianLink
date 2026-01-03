@@ -1,19 +1,9 @@
+
 import { GuardianCoords } from '../types';
 
-/**
- * High-performance Location Service for Aegis Mesh.
- * Optimized for emergency tracking with high accuracy.
- */
-
-export type LocationSuccessCallback = (coords: GuardianCoords) => void;
-export type LocationErrorCallback = (message: string) => void;
-
-/**
- * Starts watching the user's location with high accuracy.
- */
 export function startLocationWatch(
-  onUpdate: LocationSuccessCallback,
-  onError: LocationErrorCallback
+  onUpdate: (coords: GuardianCoords) => void,
+  onError: (message: string) => void
 ): number {
   if (!navigator.geolocation) {
     onError("Hardware Error: GPS is not supported by this device.");
@@ -58,9 +48,6 @@ export function startLocationWatch(
   return watchId;
 }
 
-/**
- * Stops an active location watch.
- */
 export function stopLocationWatch(watchId: number): void {
   if (watchId !== -1) {
     navigator.geolocation.clearWatch(watchId);
