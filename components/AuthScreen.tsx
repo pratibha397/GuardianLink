@@ -7,6 +7,7 @@ import {
   db,
   doc,
   getDoc,
+  isFirebaseConfigured,
   sendPasswordResetEmail,
   setDoc,
   signInWithEmailAndPassword,
@@ -49,6 +50,21 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
     setLoading(true);
 
+    // If Firebase is not configured, we provide a "Demo Bypass" 
+    // This allows users in restricted environments to see the app functionality.
+    if (!isFirebaseConfigured) {
+      console.warn("GuardianLink: Firebase is not configured. Entering Local Demo mode.");
+      setTimeout(() => {
+        onLogin({
+          id: 'demo_user',
+          email: cleanEmail,
+          name: name.trim() || 'Guest User'
+        });
+        setLoading(false);
+      }, 800);
+      return;
+    }
+
     try {
       if (view === 'forgot') {
         await sendPasswordResetEmail(auth, cleanEmail);
@@ -60,20 +76,15 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
       if (view === 'register') {
         if (!name.trim()) throw new Error("A name is required for registration.");
-        
-        // 1. Create User
         const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-        
-        // 2. Update Auth Profile (Makes login FAST later)
         await updateProfile(credential.user, { displayName: name.trim() });
-
-        // 3. Save to Firestore (Async - don't let it block login if it's slow)
+        
         setDoc(doc(db, "users", cleanEmail.toLowerCase()), {
           uid: credential.user.uid,
           email: cleanEmail.toLowerCase(),
           name: name.trim(),
           createdAt: Date.now()
-        }).catch(err => console.warn("Firestore sync delayed:", err));
+        }).catch(err => console.warn("Sync delayed:", err));
 
         onLogin({
           id: credential.user.uid,
@@ -81,21 +92,15 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           name: name.trim()
         });
       } else {
-        // LOGIN PATH
         const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        
-        // Use displayName from Auth profile for speed
         let finalName = credential.user.displayName || '';
 
-        // Only check DB if name is missing from profile
         if (!finalName) {
           try {
             const userSnap = await getDoc(doc(db, "users", cleanEmail.toLowerCase()));
-            if (userSnap.exists()) {
-              finalName = userSnap.data().name;
-            }
+            if (userSnap.exists()) finalName = userSnap.data().name;
           } catch (dbErr) {
-            console.warn("DB lookup failed, using fallback name");
+            console.warn("DB lookup failed");
           }
         }
 
@@ -110,27 +115,17 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       let message = "An error occurred during authentication.";
       
       switch (err.code) {
-        case 'auth/email-already-in-use':
-          message = "This email is already registered.";
-          break;
+        case 'auth/email-already-in-use': message = "This email is already registered."; break;
         case 'auth/invalid-credential':
-        case 'auth/wrong-password':
-          message = "Incorrect email or password.";
-          break;
-        case 'auth/user-not-found':
-          message = "No account exists with this email.";
-          break;
-        case 'auth/invalid-email':
-          message = "The email address is badly formatted.";
-          break;
-        case 'auth/network-request-failed':
-          message = "Network error. Check your connection.";
-          break;
-        case 'auth/too-many-requests':
-          message = "Too many failed attempts. Try again later.";
-          break;
-        default:
-          message = err.message || "Connection failed. Please try again.";
+        case 'auth/wrong-password': message = "Incorrect email or password."; break;
+        case 'auth/user-not-found': message = "No account exists with this email."; break;
+        case 'auth/network-request-failed': message = "Network error. Check your connection."; break;
+        case 'auth/configuration-not-found': 
+        case 'auth/invalid-api-key':
+          message = "Firebase configuration is invalid. Entering demo mode...";
+          setTimeout(() => onLogin({ id: 'demo', email: cleanEmail, name: 'Demo User' }), 1500);
+          return;
+        default: message = "Sign in failed. Ensure your account is valid.";
       }
       setError(message);
     } finally {
@@ -222,6 +217,12 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                 </div>
               )}
             </div>
+
+            {!isFirebaseConfigured && (
+              <div className="text-[10px] text-amber-500 font-bold uppercase text-center bg-amber-500/10 p-2 rounded-xl border border-amber-500/20">
+                ⚠️ Local Demo Mode Active
+              </div>
+            )}
 
             {view === 'login' && (
               <div className="text-right">

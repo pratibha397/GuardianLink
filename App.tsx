@@ -28,11 +28,9 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isEmergency, setIsEmergency] = useState(false);
 
-  const isConfigured = !!(
-    typeof process !== 'undefined' && 
-    process.env.API_KEY && 
-    process.env.FIREBASE_PROJECT_ID
-  );
+  // We only strictly require the primary API_KEY for the app to be considered "ready"
+  // Specific backend services (Firebase) will handle their own missing config gracefully.
+  const isConfigured = !!(process.env.API_KEY);
 
   const handleLogout = () => {
     localStorage.removeItem('guardian_user');
@@ -53,7 +51,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="font-extrabold text-lg tracking-tight leading-none uppercase">GuardianLink</h1>
             <p className="text-[8px] mono text-slate-500 uppercase font-bold tracking-[0.3em] mt-1">
-              {isConfigured ? 'System Secure' : 'Local Demo Mode'}
+              {isConfigured ? 'Link Established' : 'System Offline'}
             </p>
           </div>
         </div>
@@ -66,7 +64,7 @@ const App: React.FC = () => {
         <div className="mx-6 mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3">
           <AlertTriangle size={14} className="text-amber-500 shrink-0" />
           <p className="text-[9px] font-bold uppercase text-amber-500 tracking-wider">
-            Configuration keys missing. App in demo mode.
+            Critical configuration missing. Please check API settings.
           </p>
         </div>
       )}
