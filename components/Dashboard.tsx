@@ -6,14 +6,18 @@ import {
   ChevronRight,
   Globe,
   MapPin,
+  MessageCircle,
   Power,
-  Search, ShieldAlert,
-  Timer
+  Search,
+  Send,
+  ShieldAlert,
+  Timer,
+  X
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { startLocationWatch, stopLocationWatch } from '../services/LocationServices';
-import { ref, rtdb, set } from '../services/firebase';
-import { AlertLog, AppSettings, User as AppUser, GuardianCoords, SafeSpot } from '../types';
+import { DataSnapshot, onValue, push, ref, rtdb, set } from '../services/firebase';
+import { AlertLog, AppSettings, User as AppUser, ChatMessage, GuardianCoords, SafeSpot } from '../types';
 
 interface DashboardProps {
   user: AppUser;
@@ -30,10 +34,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
   const [safeSpots, setSafeSpots] = useState<SafeSpot[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [activeAlertId, setActiveAlertId] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [replyText, setReplyText] = useState("");
   
   const watchIdRef = useRef<number>(-1);
   const timerRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (timerActive && timeLeft > 0) {
@@ -44,13 +52,32 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     return () => clearTimeout(timerRef.current);
   }, [timerActive, timeLeft]);
 
+  // Sync active alert chat
+  useEffect(() => {
+    if (activeAlertId) {
+      const chatRef = ref(rtdb, `alerts/${activeAlertId}/updates`);
+      const unsubscribe = onValue(chatRef, (snapshot: DataSnapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          setChatMessages(Object.values(data) as ChatMessage[]);
+          setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [activeAlertId]);
+
   useEffect(() => {
     if (settings.isListening || isEmergency) {
-      setErrorMsg(null); // Clear previous errors when starting
+      setErrorMsg(null);
       watchIdRef.current = startLocationWatch(
         (c: GuardianCoords) => {
           setCoords(c);
           setErrorMsg(null);
+          // If in emergency, keep the database updated with latest location
+          if (activeAlertId) {
+            set(ref(rtdb, `alerts/${activeAlertId}/location`), c).catch(() => {});
+          }
         },
         (err: string) => setErrorMsg(err)
       );
@@ -61,12 +88,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       }
     }
     return () => stopLocationWatch(watchIdRef.current);
-  }, [settings.isListening, isEmergency]);
+  }, [settings.isListening, isEmergency, activeAlertId]);
 
   const startListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setErrorMsg("Voice activation is not supported in this browser.");
+      setErrorMsg("Voice activation is not supported.");
       return;
     }
 
@@ -81,7 +108,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
         .join('').toLowerCase();
       
       if (transcript.includes(settings.triggerPhrase.toLowerCase())) {
-        triggerSOS(`Voice Activated: "${settings.triggerPhrase}"`);
+        triggerSOS("Help me");
       }
     };
 
@@ -97,7 +124,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       recognition.start();
       recognitionRef.current = recognition;
     } catch (e) {
-      setErrorMsg("Mic access was denied.");
+      setErrorMsg("Mic access denied.");
     }
   };
 
@@ -112,7 +139,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
   };
 
   const triggerSOS = async (reason: string) => {
-    const alertId = `alert_${Date.now()}`;
+    // If an alert is already active, don't create a new one, just update message
+    if (activeAlertId) return;
+
+    const alertId = `alert_${user.id}_${Date.now()}`;
     const log: AlertLog = {
       id: alertId,
       senderEmail: user.email,
@@ -126,16 +156,47 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     
     try {
       await set(ref(rtdb, `alerts/${alertId}`), log);
+      setActiveAlertId(alertId);
       onAlert(log);
       setTimerActive(false);
     } catch (e) {
-      setErrorMsg("Emergency alert failed to send.");
+      setErrorMsg("SOS broadcast failed. Checking connection...");
+    }
+  };
+
+  const sendChatMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeAlertId || !replyText.trim()) return;
+
+    const msg: ChatMessage = {
+      id: Date.now().toString(),
+      senderName: user.name,
+      senderEmail: user.email,
+      text: replyText.trim(),
+      timestamp: Date.now()
+    };
+
+    try {
+      const updatesRef = ref(rtdb, `alerts/${activeAlertId}/updates`);
+      await set(push(updatesRef), msg);
+      setReplyText("");
+    } catch (e) {
+      setErrorMsg("Message delivery failed.");
+    }
+  };
+
+  const cancelSOS = async () => {
+    if (activeAlertId) {
+      await set(ref(rtdb, `alerts/${activeAlertId}/isLive`), false);
+      setActiveAlertId(null);
+      setChatMessages([]);
+      window.location.reload(); // Hard reset for safety
     }
   };
 
   const findSafeSpots = async () => {
     if (!coords) {
-      setErrorMsg("GPS lock required for scanning.");
+      setErrorMsg("Wait for GPS lock.");
       return;
     }
     setIsSearching(true);
@@ -144,20 +205,79 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Locate hospital and police resources near ${coords.lat}, ${coords.lng}.`,
+        contents: `Locate 3 emergency services (hospitals, police) near lat ${coords.lat}, lng ${coords.lng}.`,
       });
       
       setSafeSpots([
-        { name: "Local Police Division", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` },
-        { name: "Nearest Medical Center", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` },
-        { name: "Public Safety Zone", uri: `https://www.google.com/maps/search/emergency/@${coords.lat},${coords.lng},15z` }
+        { name: "Nearest Police Station", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` },
+        { name: "Emergency Medical Care", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` },
+        { name: "Fire Department / Safety", uri: `https://www.google.com/maps/search/fire+station/@${coords.lat},${coords.lng},15z` }
       ]);
     } catch (e: any) {
-      setErrorMsg("AI service unavailable.");
+      setErrorMsg("Network resource error.");
     } finally {
       setIsSearching(false);
     }
   };
+
+  if (activeAlertId) {
+    return (
+      <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500">
+        <div className="bg-red-600 p-8 rounded-[2.5rem] shadow-[0_30px_60px_rgba(220,38,38,0.3)] text-center relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white/10 to-transparent animate-pulse" />
+          <ShieldAlert size={60} className="text-white mx-auto mb-4 relative z-10" />
+          <h2 className="text-3xl font-black uppercase tracking-tighter text-white relative z-10 italic">SOS BROADCASTING</h2>
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-red-100/80 mt-2 relative z-10">Guardians have been notified</p>
+        </div>
+
+        <div className="glass rounded-[2rem] p-6 border-red-500/20 flex flex-col h-[400px]">
+          <div className="flex items-center gap-3 mb-4 border-b border-white/5 pb-4">
+            <MessageCircle size={18} className="text-blue-500" />
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Guardian Comms</h3>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2 custom-scrollbar">
+            {chatMessages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-slate-700 text-center px-4">
+                <Activity size={24} className="mb-3 opacity-20" />
+                <p className="text-[10px] uppercase font-bold tracking-widest italic">Encrypted channel established. Waiting for response...</p>
+              </div>
+            ) : (
+              chatMessages.map((msg, idx) => (
+                <div key={idx} className={`flex flex-col ${msg.senderEmail === user.email ? 'items-end' : 'items-start'}`}>
+                  <div className={`max-w-[85%] p-4 rounded-2xl text-xs font-bold leading-relaxed ${msg.senderEmail === user.email ? 'bg-blue-600 text-white rounded-tr-none shadow-lg shadow-blue-600/20' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-white/5'}`}>
+                    <p className="text-[8px] uppercase tracking-tighter opacity-50 mb-1">{msg.senderName}</p>
+                    {msg.text}
+                  </div>
+                </div>
+              ))
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          <form onSubmit={sendChatMessage} className="flex gap-2">
+            <input 
+              type="text" 
+              value={replyText} 
+              onChange={(e) => setReplyText(e.target.value)}
+              placeholder="Message guardians..."
+              className="flex-1 bg-slate-950 border border-white/5 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
+            />
+            <button type="submit" className="bg-blue-600 p-3 rounded-xl text-white shadow-lg shadow-blue-600/20 active:scale-95 transition-all">
+              <Send size={18} />
+            </button>
+          </form>
+        </div>
+
+        <button 
+          onClick={cancelSOS}
+          className="w-full bg-slate-900 border border-white/5 py-4 rounded-2xl text-slate-400 font-bold uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
+        >
+          <X size={14} /> I am safe now
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-5 duration-700">
@@ -214,8 +334,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
           </div>
         </div>
 
-        <div onClick={() => triggerSOS("Manual Alert Tap")} className="bg-red-950/20 border border-red-500/10 p-6 rounded-[2rem] flex flex-col justify-between active:scale-95 transition-transform cursor-pointer hover:bg-red-950/30">
-          <div className="p-2.5 bg-red-600 rounded-xl w-fit text-white shadow-lg shadow-red-600/20">
+        <div onClick={() => triggerSOS("Manual Emergency Alert")} className="bg-red-950/20 border border-red-500/10 p-6 rounded-[2rem] flex flex-col justify-between active:scale-95 transition-transform cursor-pointer hover:bg-red-950/30 group">
+          <div className="p-2.5 bg-red-600 rounded-xl w-fit text-white shadow-lg shadow-red-600/20 group-hover:scale-110 transition-transform">
             <ShieldAlert size={20} />
           </div>
           <div>
