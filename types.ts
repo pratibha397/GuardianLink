@@ -17,6 +17,7 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: number;
+  location?: { lat: number; lng: number }; // Optional: location attachment in chat
 }
 
 export interface AppSettings {
@@ -39,7 +40,7 @@ export interface AlertLog {
   timestamp: number;
   location: { lat: number; lng: number } | null;
   message: string;
-  updates: ChatMessage[]; // New: support for internal two-way chat
+  updates: ChatMessage[];
   isLive: boolean;
   recipients: string[]; // List of registered guardian phone numbers
 }

@@ -26,12 +26,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
   const registeredContacts = settings.contacts.filter(c => c.isRegisteredUser);
 
-  // Auto-scroll chat to bottom
+  // Scroll to new messages automatically
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (activeAlert?.updates.length) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [activeAlert?.updates]);
 
-  // Wake Lock for background persistence
+  // Keep screen on during security monitoring
   useEffect(() => {
     const requestWakeLock = async () => {
       if ('wakeLock' in navigator) {
@@ -51,7 +53,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
     return () => { if (wakeLock) wakeLock.release(); };
   }, [settings.isListening, isEmergency]);
 
-  // Sync loop for two-way chat updates from guardians
+  // Two-way sync: polling for chat updates from guardians
   useEffect(() => {
     if (!isEmergency) {
       setActiveAlert(null);
@@ -62,16 +64,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       const mine = all.find(a => a.senderPhone === user.phone && a.isLive);
       if (mine) setActiveAlert(mine);
     };
-    const interval = setInterval(syncUpdates, 1000); // Fast sync for chat feel
+    const interval = setInterval(syncUpdates, 1000); // 1s sync for real-time chat feel
     return () => clearInterval(interval);
   }, [isEmergency, user.phone]);
 
-  // Geolocation broadcast loop
+  // Continuous high-frequency GPS stream
   useEffect(() => {
     if (settings.isListening || isEmergency) {
       const geoOptions = {
         enableHighAccuracy: true,
-        timeout: 5000,
+        timeout: 10000,
         maximumAge: 0 
       };
 
@@ -80,6 +82,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setCurrentCoords(coords);
           
+          // If emergency is active, immediately push location to global registry
           if (isEmergency) {
             const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
             const idx = all.findIndex(a => a.senderPhone === user.phone && a.isLive);
@@ -90,8 +93,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
           }
         },
         (err) => {
-          console.error("GPS Error:", err);
-          if (err.code === 1) setError("GPS Permission is critical for your safety network.");
+          console.error("GPS stream error:", err);
+          if (err.code === 1) setError("Location access is required for emergency features.");
         },
         geoOptions
       );
@@ -106,25 +109,41 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
   const triggerAlert = () => {
     if (registeredContacts.length === 0) {
-      setError("No Guardians Linked: You must add and verify guardians in settings to send an alert.");
+      setError("Emergency block: You must link at least one registered Guardian in settings.");
       return;
     }
 
-    const newLog: AlertLog = {
-      id: Date.now().toString(),
-      senderPhone: user.phone,
-      senderName: user.name,
-      timestamp: Date.now(),
-      location: currentCoords,
-      message: "EMERGENCY: Voice trigger detected. Automatically broadcasting live GPS coordinates.",
-      updates: [],
-      isLive: true,
-      recipients: registeredContacts.map(c => c.phone)
-    };
+    // Capture location specifically for the trigger moment
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setCurrentCoords(coords);
+        broadcast(coords);
+      },
+      (err) => {
+        console.warn("Failed immediate GPS capture, using last known.");
+        broadcast(currentCoords);
+      },
+      { enableHighAccuracy: true, timeout: 5000 }
+    );
 
-    onAlertTriggered(newLog);
-    setActiveAlert(newLog);
-    setError(null);
+    const broadcast = (loc: {lat: number, lng: number} | null) => {
+      const newLog: AlertLog = {
+        id: Date.now().toString(),
+        senderPhone: user.phone,
+        senderName: user.name,
+        timestamp: Date.now(),
+        location: loc,
+        message: "🚨 EMERGENCY TRIGGERED 🚨 Location broadcast started automatically.",
+        updates: [],
+        isLive: true,
+        recipients: registeredContacts.map(c => c.phone)
+      };
+
+      onAlertTriggered(newLog);
+      setActiveAlert(newLog);
+      setError(null);
+    };
   };
 
   const sendChatMessage = (e: React.FormEvent) => {
@@ -139,7 +158,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         id: Date.now().toString(),
         senderName: user.name,
         text: chatMessage,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        location: currentCoords || undefined
       };
       all[idx].updates.push(msg);
       localStorage.setItem(GLOBAL_ALERTS_KEY, JSON.stringify(all));
@@ -171,12 +191,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         <div className="flex items-center gap-3">
           {wakeLock ? <Lock size={14} className="animate-pulse" /> : <Unlock size={14} />}
           <span className="text-[10px] font-black uppercase tracking-[0.2em]">
-            {wakeLock ? 'Secure Mesh Active' : 'Offline Mode'}
+            {wakeLock ? 'Active Security Mesh' : 'Standby Mode'}
           </span>
         </div>
         <div className="flex items-center gap-2">
            <div className={`w-2 h-2 rounded-full ${currentCoords ? 'bg-blue-500 animate-pulse' : 'bg-slate-700'}`} />
-           <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'GPS Streaming' : 'Searching GPS'}</span>
+           <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'GPS Live' : 'Locating...'}</span>
         </div>
       </div>
 
@@ -197,22 +217,22 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
           <div className="mt-12 text-center space-y-3">
             <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-none">
-              {settings.isListening ? 'Shield On' : 'Shield Off'}
+              {settings.isListening ? 'AI Guard On' : 'AI Guard Off'}
             </h2>
             <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.5em] italic leading-relaxed">
-              {settings.isListening ? `Trigger: "${settings.triggerPhrase}"` : 'Touch to Secure Device'}
+              {settings.isListening ? `Trigger: "${settings.triggerPhrase}"` : 'Touch to Secure Mesh'}
             </p>
           </div>
         </div>
       ) : (
         <div className="space-y-5 animate-in slide-in-from-bottom-10 duration-700">
-          <div className="bg-blue-700 p-8 rounded-[3rem] shadow-[0_40px_100px_rgba(29,78,216,0.4)] relative overflow-hidden border border-blue-400/50">
+          <div className="bg-red-600 p-8 rounded-[3rem] shadow-[0_40px_100px_rgba(220,38,38,0.4)] relative overflow-hidden border border-red-400/50">
              <div className="flex items-center gap-5 relative z-10">
-                <div className="bg-white p-4 rounded-3xl text-blue-700 shadow-2xl rotate-6 border-4 border-blue-400/20"><ShieldCheck size={36} /></div>
+                <div className="bg-white p-4 rounded-3xl text-red-600 shadow-2xl rotate-6 border-4 border-red-400/20"><ShieldCheck size={36} /></div>
                 <div className="flex-1">
-                  <h4 className="font-black text-2xl text-white italic leading-tight tracking-tighter">Emergency Mode</h4>
-                  <div className="flex items-center gap-2 mt-2 text-[10px] text-blue-100 font-black uppercase tracking-widest bg-white/20 w-fit px-4 py-1.5 rounded-full backdrop-blur-md">
-                    <Radio size={12} className="animate-pulse" /> Broadcasting to {registeredContacts.length} Guardians
+                  <h4 className="font-black text-2xl text-white italic leading-tight tracking-tighter">Emergency Alert</h4>
+                  <div className="flex items-center gap-2 mt-2 text-[10px] text-red-100 font-black uppercase tracking-widest bg-white/20 w-fit px-4 py-1.5 rounded-full backdrop-blur-md">
+                    <Radio size={12} className="animate-pulse" /> Tracking: {currentCoords?.lat.toFixed(4)}, {currentCoords?.lng.toFixed(4)}
                   </div>
                 </div>
              </div>
@@ -221,12 +241,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
              </div>
           </div>
 
-          <div className="bg-slate-900 p-7 rounded-[3.5rem] border border-slate-800 h-[480px] flex flex-col shadow-[0_50px_120px_rgba(0,0,0,0.6)] relative">
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-slate-800 rounded-full mt-3" />
-            
+          <div className="bg-slate-900 p-7 rounded-[3.5rem] border border-slate-800 h-[520px] flex flex-col shadow-[0_50px_120px_rgba(0,0,0,0.6)] relative">
             <div className="flex items-center gap-3 mb-6 px-2 mt-2">
                <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500 shadow-sm"><MessageCircle size={18} /></div>
-               <h5 className="text-[11px] font-black uppercase tracking-[0.3em] text-slate-500 italic">Tactical Comms</h5>
+               <h5 className="text-[11px] font-black uppercase tracking-[0.3em] text-slate-500 italic">Guardian Tactical Chat</h5>
             </div>
             
             <div className="flex-1 overflow-y-auto space-y-4 px-2 custom-scrollbar">
@@ -235,7 +253,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
               </div>
               
               {activeAlert?.updates.map(msg => (
-                <div key={msg.id} className={`max-w-[88%] p-5 rounded-[2rem] text-[12px] leading-relaxed shadow-xl animate-in fade-in slide-in-from-bottom-2 ${msg.senderName === user.name ? 'ml-auto bg-blue-600 text-white rounded-br-none border border-blue-500/50' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-bl-none'}`}>
+                <div key={msg.id} className={`max-w-[88%] p-5 rounded-[2rem] text-[12px] shadow-xl animate-in fade-in slide-in-from-bottom-2 ${msg.senderName === user.name ? 'ml-auto bg-blue-600 text-white rounded-br-none' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-bl-none'}`}>
                   <div className="flex justify-between items-center mb-1.5 opacity-60">
                     <span className="font-black uppercase text-[8px] tracking-[0.2em]">{msg.senderName}</span>
                     <span className="text-[8px] font-bold">{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
@@ -249,7 +267,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
             <form onSubmit={sendChatMessage} className="mt-6 relative group px-1">
               <input 
                 type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} 
-                placeholder="Broadcast status update..." 
+                placeholder="Broadcast status or info..." 
                 className="w-full bg-slate-950 border border-slate-800 rounded-[2rem] py-5 pl-7 pr-16 text-sm text-white font-medium focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 shadow-inner transition-all" 
               />
               <button type="submit" className="absolute right-4 top-1/2 -translate-y-1/2 p-4 bg-blue-600 text-white rounded-[1.4rem] shadow-2xl hover:bg-blue-500 active:scale-95 transition-all">
@@ -267,22 +285,24 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-5 pb-6">
-        <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
-          <div className="p-3 bg-blue-600/10 rounded-2xl w-fit text-blue-500 group-hover:scale-110 transition-transform"><Users size={28} /></div>
-          <div>
-            <div className="text-5xl font-black text-white italic tracking-tighter leading-none">{registeredContacts.length}</div>
-            <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-1 inline-block">Verifed Guards</span>
+      {!isEmergency && (
+        <div className="grid grid-cols-2 gap-5 pb-6">
+          <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
+            <div className="p-3 bg-blue-600/10 rounded-2xl w-fit text-blue-500 group-hover:scale-110 transition-transform"><Users size={28} /></div>
+            <div>
+              <div className="text-5xl font-black text-white italic tracking-tighter leading-none">{registeredContacts.length}</div>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-1 inline-block">Mesh Guards</span>
+            </div>
+          </div>
+          <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
+            <div className={`p-3 rounded-2xl w-fit ${currentCoords ? 'bg-blue-600/10 text-blue-500 animate-pulse' : 'bg-slate-800 text-slate-700'}`}><MapPin size={28} /></div>
+            <div>
+              <div className="text-xl font-black text-white italic leading-tight tracking-tighter truncate">{currentCoords ? 'Satellite Active' : 'Offline'}</div>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-1 inline-block">Location Link</span>
+            </div>
           </div>
         </div>
-        <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-xl group hover:border-blue-500/30 transition-all cursor-pointer">
-          <div className={`p-3 rounded-2xl w-fit ${currentCoords ? 'bg-blue-600/10 text-blue-500 animate-pulse' : 'bg-slate-800 text-slate-700'}`}><MapPin size={28} /></div>
-          <div>
-            <div className="text-xl font-black text-white italic leading-tight tracking-tighter">{currentCoords ? 'Live Stream' : 'GPS Offline'}</div>
-            <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-1 inline-block">Satellite Link</span>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 };
