@@ -3,11 +3,16 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, (process as any).cwd(), '');
+  // Load env file based on `mode` in the current working directory.
+  // Set the third parameter to '' to load all envs regardless of the `VITE_` prefix.
+  const env = loadEnv(mode, process.cwd(), '');
   
-  // Create a mapping of all environment variables to be defined in the client
+  // Create a mapping of environment variables to be defined in the client.
+  // We explicitly include the ones needed for Aegis Mesh.
   const envDefinitions = Object.keys(env).reduce((acc, key) => {
-    acc[`process.env.${key}`] = JSON.stringify(env[key]);
+    if (key.startsWith('FIREBASE_') || key === 'API_KEY') {
+      acc[`process.env.${key}`] = JSON.stringify(env[key]);
+    }
     return acc;
   }, {} as Record<string, string>);
 
@@ -15,9 +20,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       ...envDefinitions,
-      'process.env.API_KEY': JSON.stringify(env.API_KEY || ''),
       'process.env.NODE_ENV': JSON.stringify(mode),
-      'process.cwd': '(() => "/")'
     },
     server: {
       port: 5173,
