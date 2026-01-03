@@ -58,10 +58,10 @@ const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
             <Radio size={18} className="text-blue-500 animate-pulse" />
             <div className="absolute inset-0 bg-blue-500 rounded-full animate-ping opacity-20" />
           </div>
-          <h3 className="font-black text-xs uppercase tracking-[0.4em] text-slate-500 italic">Network Intercept</h3>
+          <h3 className="font-black text-xs uppercase tracking-[0.4em] text-slate-500 italic">Satellite Intercept</h3>
         </div>
         <div className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-[9px] font-black text-slate-500 uppercase flex items-center gap-2">
-          <Clock size={12} className="text-blue-500" /> Live Feed
+          <Clock size={12} className="text-blue-500" /> Active Tracking
         </div>
       </div>
 
@@ -74,13 +74,13 @@ const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
                 <div>
                   <h4 className="font-black text-2xl text-white italic tracking-tighter leading-none">{alert.senderName}</h4>
                   <p className="text-[10px] text-blue-500 font-black uppercase flex items-center gap-2 mt-2 leading-none">
-                    <Activity size={12} className="animate-pulse" /> Live Tracking Broadcast
+                    <Activity size={12} className="animate-pulse" /> Encrypted Mesh Live
                   </p>
                 </div>
               </div>
               <div className="bg-red-500/10 border-2 border-red-500/20 px-4 py-2 rounded-[1.2rem] flex items-center gap-2">
                 <ShieldAlert size={16} className="text-red-500" />
-                <span className="text-[10px] font-black text-red-500 uppercase">Emergency</span>
+                <span className="text-[10px] font-black text-red-500 uppercase italic">Intercepted</span>
               </div>
             </div>
 
@@ -94,7 +94,7 @@ const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
                   </div>
                   <div className="absolute bottom-5 left-5 right-5 flex justify-between items-center bg-slate-900/95 p-5 rounded-[1.8rem] border border-white/5 shadow-2xl">
                     <div className="space-y-1">
-                      <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest leading-none">GPS Lock Active</p>
+                      <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest leading-none">GPS Mesh Secure</p>
                       <div className="text-[11px] font-black text-white uppercase tabular-nums tracking-tighter leading-none">
                         {alert.location.lat.toFixed(6)}, {alert.location.lng.toFixed(6)}
                       </div>
@@ -105,7 +105,7 @@ const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-5 text-slate-700">
                   <Activity size={40} className="animate-bounce" />
-                  <span className="text-[11px] uppercase font-black tracking-[0.5em]">Syncing Coordinates...</span>
+                  <span className="text-[11px] uppercase font-black tracking-[0.5em]">Establishing Connection...</span>
                 </div>
               )}
             </div>
@@ -113,11 +113,11 @@ const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
             <div className="space-y-5">
               <div className="flex items-center gap-3 px-2">
                 <MessageCircle size={16} className="text-blue-500" />
-                <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-500 italic">Tactical Feed</h5>
+                <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-500 italic">Guardian Feed</h5>
               </div>
               <div className="max-h-64 overflow-y-auto space-y-4 px-3 custom-scrollbar">
                 <div className="bg-blue-600/10 border-2 border-blue-500/10 p-5 rounded-[2.2rem] text-[12px] text-blue-100 italic leading-relaxed shadow-inner border-dashed">
-                  Alert: {alert.message}
+                  Intercept: {alert.message}
                 </div>
                 {alert.updates.map(msg => (
                   <div key={msg.id} className={`p-5 rounded-[2.2rem] text-[13px] shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-300 border ${normalizePhone(msg.senderPhone) === normalizePhone(user.phone) ? 'ml-auto bg-blue-600 text-white border-blue-400/30 rounded-br-none' : 'bg-slate-800 text-slate-200 border-slate-700 rounded-bl-none mr-12'}`}>
@@ -141,8 +141,8 @@ const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
           <div className="py-64 text-center space-y-8 animate-in fade-in duration-1000">
             <Radio size={80} className="text-slate-900 mx-auto" />
             <div className="space-y-3 px-10">
-              <p className="text-[11px] font-black uppercase text-slate-700 tracking-[0.6em] leading-none">Security Standby</p>
-              <p className="text-[9px] font-bold uppercase text-slate-800 tracking-widest italic leading-relaxed">Guardians are monitoring for active satellite handshakes</p>
+              <p className="text-[11px] font-black uppercase text-slate-700 tracking-[0.6em] leading-none">Mesh Standby</p>
+              <p className="text-[9px] font-bold uppercase text-slate-800 tracking-widest italic leading-relaxed">Monitoring for active satellite links</p>
             </div>
           </div>
         )}

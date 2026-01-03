@@ -43,5 +43,5 @@ export interface AlertLog {
   message: string;
   updates: ChatMessage[];
   isLive: boolean;
-  recipients: string[]; // Normalized phone numbers (last 10 digits)
+  recipients: string[]; // Normalized last 10 digits
 }

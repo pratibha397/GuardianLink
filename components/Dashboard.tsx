@@ -27,7 +27,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
   const registeredContacts = settings.contacts.filter(c => c.isRegisteredUser);
 
-  // Sync state with global database
+  // Sync state with shared mesh database
   useEffect(() => {
     if (!isEmergency) {
       setActiveAlert(null);
@@ -46,7 +46,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeAlert?.updates]);
 
-  // Keep screen on during monitoring
+  // Screen Wake Lock API
   useEffect(() => {
     const requestWakeLock = async () => {
       if ('wakeLock' in navigator) {
@@ -60,7 +60,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
     else if (wakeLock) wakeLock.release().then(() => setWakeLock(null));
   }, [settings.isListening, isEmergency]);
 
-  // Live Location Broadcast
+  // Live High-Frequency Geolocation
   useEffect(() => {
     if (settings.isListening || isEmergency) {
       watchIdRef.current = navigator.geolocation.watchPosition(
@@ -77,7 +77,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
             }
           }
         },
-        (err) => setError("Location access required for mesh alerts."),
+        (err) => setError("Mesh Location Error: Geolocation disabled."),
         { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
       );
     } else if (watchIdRef.current) {
@@ -88,7 +88,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
 
   const triggerAlert = (manual = false) => {
     if (registeredContacts.length === 0) {
-      setError("No Guardians Linked: You must add registered friends in settings first.");
+      setError("Shield Blocked: No registered Guardians found in your mesh.");
       return;
     }
 
@@ -99,7 +99,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         senderName: user.name,
         timestamp: Date.now(),
         location: loc,
-        message: manual ? "🚨 SOS TRIGGERED MANUALLY 🚨" : "🚨 VOICE ACTIVATED ALERT 🚨",
+        message: manual ? "🚨 MANUAL SOS TRIGGERED 🚨" : "🚨 VOICE ACTIVATED ALERT 🚨",
         updates: [],
         isLive: true,
         recipients: registeredContacts.map(c => normalizePhone(c.phone))
@@ -160,11 +160,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       <div className={`p-4 rounded-3xl flex items-center justify-between border ${wakeLock ? 'bg-green-500/10 border-green-500/20 text-green-500 shadow-lg' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
         <div className="flex items-center gap-3">
           {wakeLock ? <Lock size={14} className="animate-pulse" /> : <Unlock size={14} />}
-          <span className="text-[10px] font-black uppercase tracking-widest">{wakeLock ? 'Security Shield Active' : 'Standby Mode'}</span>
+          <span className="text-[10px] font-black uppercase tracking-widest">{wakeLock ? 'Mesh Active' : 'Shield Standby'}</span>
         </div>
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${currentCoords ? 'bg-blue-500 animate-pulse' : 'bg-slate-700'}`} />
-          <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'GPS Streaming' : 'Locating...'}</span>
+          <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'Live GPS' : 'No Signal'}</span>
         </div>
       </div>
 
@@ -175,7 +175,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
               <Power size={80} className={settings.isListening ? 'text-white' : 'text-slate-600'} />
             </button>
             <div className="mt-12 text-center space-y-3">
-              <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-none">{settings.isListening ? 'AI Guard On' : 'AI Guard Off'}</h2>
+              <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase">{settings.isListening ? 'AI Guard On' : 'AI Guard Off'}</h2>
               <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em] leading-relaxed px-6">
                 {settings.isListening ? `Listening for: "${settings.triggerPhrase}"` : 'Touch icon to begin voice monitoring'}
               </p>
@@ -188,14 +188,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
           >
             <div className="bg-white/20 p-4 rounded-3xl group-hover:rotate-12 transition-transform"><ShieldAlert size={44} className="text-white" /></div>
             <div className="text-left">
-              <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase leading-none">Panic Button</h3>
-              <p className="text-red-100 text-[10px] font-black uppercase tracking-widest mt-1 opacity-70">Manual SOS Trigger</p>
+              <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase leading-none">Manual SOS</h3>
+              <p className="text-red-100 text-[10px] font-black uppercase tracking-widest mt-1 opacity-70">Immediate Mesh Activation</p>
             </div>
           </button>
         </>
       ) : (
         <div className="space-y-5 animate-in slide-in-from-bottom-10 duration-700">
-          <div className="bg-red-600 p-8 rounded-[3rem] shadow-[0_40px_100px_rgba(220,38,38,0.4)] relative overflow-hidden border-2 border-red-400/30">
+          <div className="bg-red-600 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden border-2 border-red-400/30">
              <div className="flex items-center gap-5 relative z-10">
                 <div className="bg-white p-4 rounded-3xl text-red-600 shadow-2xl rotate-6"><ShieldCheck size={40} /></div>
                 <div className="flex-1 text-white">
@@ -233,7 +233,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
             <form onSubmit={sendChatMessage} className="mt-6 flex gap-3 relative">
               <input 
                 type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} 
-                placeholder="Broadcast status or info..." 
+                placeholder="Broadcast info..." 
                 className="grow bg-slate-950 border border-slate-800 rounded-[2rem] py-5 px-7 text-sm text-white font-medium focus:border-blue-500 shadow-inner outline-none transition-all" 
               />
               <button type="submit" className="p-5 bg-blue-600 text-white rounded-2xl shadow-xl hover:bg-blue-500 active:scale-95 transition-all">
@@ -263,8 +263,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
           <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-2xl group hover:border-blue-500/30 transition-all cursor-pointer">
             <div className={`p-4 rounded-2xl w-fit ${currentCoords ? 'bg-blue-600/10 text-blue-500 animate-pulse' : 'bg-slate-800 text-slate-700'}`}><MapPin size={32} /></div>
             <div>
-              <div className="text-xl font-black text-white italic leading-tight tracking-tighter truncate">{currentCoords ? 'GPS Streaming' : 'Locating...'}</div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-2 block">Satellite Link</span>
+              <div className="text-xl font-black text-white italic leading-tight tracking-tighter truncate">{currentCoords ? 'GPS Live' : 'Locating...'}</div>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-2 block">Satellite Mesh</span>
             </div>
           </div>
         </div>

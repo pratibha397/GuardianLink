@@ -16,9 +16,8 @@ const COUNTRY_CODES = [
 export const GLOBAL_REGISTRY_KEY = 'guardian_link_network_db';
 
 /**
- * Robust Normalization for Network Matching:
- * Strips all non-digits and takes the last 10 digits.
- * This ensures '+91 9988776655' and '9988776655' match perfectly.
+ * Robust Normalization: Strips non-digits and uses last 10 digits.
+ * Solves the registration matching bug.
  */
 export const normalizePhone = (p: string) => {
   if (!p) return "";
@@ -58,13 +57,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
     if (authMode === 'register' && existingUser) {
       setLoading(false);
-      setError("Account already exists. Try Login.");
+      setError("Number already registered. Please login.");
       return;
     }
 
     if (authMode === 'login' && !existingUser) {
       setLoading(false);
-      setError("User not found in Guardian registry.");
+      setError("User not found in Guardian mesh.");
       return;
     }
 
@@ -108,28 +107,28 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 overflow-hidden">
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
       {showDemoToast && (
         <div className="fixed top-8 left-1/2 -translate-x-1/2 w-full max-w-xs z-50 animate-bounce">
           <div className="bg-blue-600 p-5 rounded-3xl shadow-2xl flex items-center gap-4">
             <MessageSquare size={24} className="text-white" />
             <div>
               <p className="text-[10px] text-white/70 font-black uppercase">Guardian SMS</p>
-              <p className="text-lg text-white font-black">Your code: {demoOtp}</p>
+              <p className="text-lg text-white font-black">Code: {demoOtp}</p>
             </div>
           </div>
         </div>
       )}
 
       <div className="w-full max-w-md space-y-12">
-        <div className="text-center space-y-6">
+        <div className="text-center space-y-4">
           <div className="inline-block p-7 bg-blue-600 rounded-[3rem] shadow-2xl border-4 border-slate-950">
             <Shield size={64} className="text-white" />
           </div>
           <h1 className="text-5xl font-black text-white italic tracking-tighter">Guardian</h1>
         </div>
 
-        <div className="bg-slate-900/50 p-10 rounded-[4rem] border border-slate-800 backdrop-blur-3xl shadow-2xl">
+        <div className="bg-slate-900/50 p-10 rounded-[4rem] border border-slate-800 backdrop-blur-3xl">
           {step === 'phone' ? (
             <form onSubmit={handlePhoneSubmit} className="space-y-8">
               <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
@@ -154,13 +153,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               {error && <div className="text-red-400 text-[10px] font-black uppercase flex items-center gap-4 bg-red-500/10 p-4 rounded-3xl border border-red-500/20"><AlertCircle size={20} className="shrink-0" />{error}</div>}
 
               <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 py-6 rounded-[2.5rem] text-white font-black uppercase tracking-widest shadow-2xl active:scale-95 transition-all">
-                {loading ? "Initializing Profile..." : "Next Step"}
+                {loading ? "Authenticating..." : "Initialise Shield"}
               </button>
             </form>
           ) : (
             <form onSubmit={handleVerify} className="space-y-12">
               <div className="text-center space-y-2">
-                <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Enter Shield Code</h3>
+                <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Mesh Authorisation</h3>
                 <p className="text-slate-600 text-[11px] font-black uppercase tracking-widest">Sent to {selectedCountry.code} {phone}</p>
               </div>
               <div className="flex justify-center gap-4">
@@ -171,8 +170,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                   }} className="w-16 h-24 bg-slate-950 border-2 border-slate-800 rounded-[1.8rem] text-center text-4xl font-black text-blue-500 shadow-inner outline-none transition-all" />
                 ))}
               </div>
-              <button type="submit" className="w-full bg-blue-600 py-6 rounded-[2.5rem] text-white font-black uppercase shadow-xl active:scale-95 transition-all">Verify Identity</button>
-              <button type="button" onClick={() => setStep('phone')} className="w-full text-slate-700 text-[10px] font-black uppercase hover:text-white transition-colors">Go Back</button>
+              <button type="submit" className="w-full bg-blue-600 py-6 rounded-[2.5rem] text-white font-black uppercase shadow-xl active:scale-95 transition-all">Verify Mesh Identity</button>
+              <button type="button" onClick={() => setStep('phone')} className="w-full text-slate-700 text-[10px] font-black uppercase hover:text-white transition-colors">Change Number</button>
             </form>
           )}
         </div>
