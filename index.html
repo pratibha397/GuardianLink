@@ -3,11 +3,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#020617">
-  <title>Aegis Mesh</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aegis Mesh | Tactical AI Safety</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,24 +12,20 @@
   <style>
     :root {
       --neon-blue: #38bdf8;
-      --neon-red: #ef4444;
       --bg-dark: #020617;
     }
     body {
       font-family: 'Space Grotesk', sans-serif;
       background-color: var(--bg-dark);
       color: #f8fafc;
-      overscroll-behavior-y: contain;
-      -webkit-tap-highlight-color: transparent;
+      overflow-x: hidden;
     }
     .mono { font-family: 'JetBrains Mono', monospace; }
-    
     .glass {
       background: rgba(15, 23, 42, 0.6);
       backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
-    
     .neural-ring {
       position: relative;
       width: 180px;
@@ -42,38 +35,18 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: all 0.5s ease;
     }
-    
-    .neural-ring.active {
-      box-shadow: 0 0 50px rgba(56, 189, 248, 0.2);
-    }
-    
     .ring-layer {
       position: absolute;
       border-radius: 50%;
       border: 1px solid rgba(56, 189, 248, 0.2);
       animation: pulse-ring 4s infinite linear;
     }
-    
     @keyframes pulse-ring {
       0% { transform: scale(0.8); opacity: 0; }
       50% { opacity: 0.5; }
       100% { transform: scale(1.5); opacity: 0; }
     }
-
-    .emergency-pulse {
-      animation: alert-red 1.5s infinite;
-    }
-    
-    @keyframes alert-red {
-      0% { background: #991b1b; }
-      50% { background: #ef4444; }
-      100% { background: #991b1b; }
-    }
-
-    header { padding-top: max(1.5rem, env(safe-area-inset-top)); }
-    nav { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
   </style>
   <script type="importmap">
 {
@@ -87,7 +60,7 @@
     "firebase/auth": "https://esm.sh/firebase@11.1.0/auth",
     "firebase/firestore": "https://esm.sh/firebase@11.1.0/firestore",
     "firebase/database": "https://esm.sh/firebase@11.1.0/database",
-    "firebase/": "https://esm.sh/firebase@11.1.0/",
+    "firebase/": "https://esm.sh/firebase@^12.7.0/",
     "vite": "https://esm.sh/vite@^7.3.0",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
@@ -96,6 +69,7 @@
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
+  <!-- Using relative path './' instead of '/' to prevent 404s on certain hosts -->
+  <script type="module" src="./index.tsx"></script>
 </body>
 </html>
