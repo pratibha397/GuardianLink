@@ -1,6 +1,6 @@
 
+import { List, MessageSquare, Mic, Trash2, UserPlus } from 'lucide-react';
 import React, { useState } from 'react';
-import { UserPlus, Trash2, Phone, Save, Mic, MessageSquare, List } from 'lucide-react';
 import { AppSettings, EmergencyContact } from '../types';
 
 interface SettingsPanelProps {
@@ -9,14 +9,15 @@ interface SettingsPanelProps {
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings }) => {
-  const [newContact, setNewContact] = useState({ name: '', phone: '' });
+  const [newContact, setNewContact] = useState<{name: string; phone: string}>({ name: '', phone: '' });
 
   const addContact = () => {
     if (newContact.name && newContact.phone) {
       const contact: EmergencyContact = {
         id: Date.now().toString(),
         name: newContact.name,
-        phone: newContact.phone
+        phone: newContact.phone,
+        isRegisteredUser: false
       };
       updateSettings({ contacts: [...settings.contacts, contact] });
       setNewContact({ name: '', phone: '' });
@@ -25,7 +26,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
 
   const removeContact = (id: string) => {
     updateSettings({
-      contacts: settings.contacts.filter(c => c.id !== id)
+      contacts: settings.contacts.filter((c: EmergencyContact) => c.id !== id)
     });
   };
 
@@ -40,7 +41,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           <input 
             type="text" 
             value={settings.triggerPhrase}
-            onChange={(e) => updateSettings({ triggerPhrase: e.target.value })}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSettings({ triggerPhrase: e.target.value })}
             placeholder="e.g. Help Help"
             className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
           />
@@ -59,7 +60,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           <textarea 
             rows={3}
             value={settings.messageTemplate}
-            onChange={(e) => updateSettings({ messageTemplate: e.target.value })}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateSettings({ messageTemplate: e.target.value })}
             className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
           />
           <p className="text-[10px] text-slate-500 px-1">
@@ -75,7 +76,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
         </div>
         
         <div className="space-y-3">
-          {settings.contacts.map(contact => (
+          {settings.contacts.map((contact: EmergencyContact) => (
             <div key={contact.id} className="flex items-center justify-between bg-slate-800/60 p-4 rounded-xl border border-slate-700/50">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center font-bold text-slate-300">
@@ -111,14 +112,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
               type="text" 
               placeholder="Name"
               value={newContact.name}
-              onChange={(e) => setNewContact(prev => ({ ...prev, name: e.target.value }))}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewContact(prev => ({ ...prev, name: e.target.value }))}
               className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
             <input 
               type="tel" 
               placeholder="Phone"
               value={newContact.phone}
-              onChange={(e) => setNewContact(prev => ({ ...prev, phone: e.target.value }))}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewContact(prev => ({ ...prev, phone: e.target.value }))}
               className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>

@@ -5,7 +5,8 @@ import { defineConfig, loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   // Load env file from the current directory. 
   // Third parameter '' allows loading variables without VITE_ prefix (needed for Vercel's API_KEY)
-  const env = loadEnv(mode, process.cwd(), '');
+  // Cast process to any to resolve the 'cwd' does not exist error if Node types are not picked up correctly.
+  const env = loadEnv(mode, (process as any).cwd(), '');
   
   return {
     plugins: [react()],
