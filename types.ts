@@ -9,15 +9,16 @@ export interface EmergencyContact {
   id: string;
   name: string;
   phone: string;
-  isRegisteredUser: boolean; // Must be true to receive Guardian Link messages
+  isRegisteredUser: boolean;
 }
 
 export interface ChatMessage {
   id: string;
   senderName: string;
+  senderPhone: string;
   text: string;
   timestamp: number;
-  location?: { lat: number; lng: number }; // Optional: location attachment in chat
+  location?: { lat: number; lng: number };
 }
 
 export interface AppSettings {
@@ -42,5 +43,5 @@ export interface AlertLog {
   message: string;
   updates: ChatMessage[];
   isLive: boolean;
-  recipients: string[]; // List of registered guardian phone numbers
+  recipients: string[]; // Normalized phone numbers (last 10 digits)
 }

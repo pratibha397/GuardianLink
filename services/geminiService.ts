@@ -53,10 +53,10 @@ export class GeminiVoiceMonitor {
   async start() {
     try {
       this.isActive = true;
-      const apiKey = process.env.API_KEY;
-      if (!apiKey) throw new Error('API Key missing.');
+      // CRITICAL: Always use process.env.API_KEY directly when initializing the GoogleGenAI client instance.
+      if (!process.env.API_KEY) throw new Error('API Key missing.');
 
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       
       // Monitor context state (important for background resume)
