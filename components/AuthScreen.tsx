@@ -1,107 +1,77 @@
 
-import { AlertCircle, Shield, User as UserIcon } from 'lucide-react';
-import React, { useRef, useState } from 'react';
-import { auth, db, doc, getDoc, RecaptchaVerifier, setDoc, signInWithPhoneNumber } from '../services/firebase';
+import { AlertCircle, Eye, EyeOff, Lock, Mail, Shield, User as UserIcon } from 'lucide-react';
+import React, { useState } from 'react';
+import {
+  auth,
+  createUserWithEmailAndPassword,
+  db,
+  doc,
+  getDoc,
+  setDoc,
+  signInWithEmailAndPassword
+} from '../services/firebase';
 import { User } from '../types';
 
 interface AuthScreenProps {
   onLogin: (user: User) => void;
 }
 
-const COUNTRY_CODES = [
-  { code: '+91', country: 'IN', flag: '🇮🇳' },
-  { code: '+1', country: 'US', flag: '🇺🇸' },
-  { code: '+44', country: 'UK', flag: '🇬🇧' },
-];
-
-export const normalizePhone = (p: string) => {
-  if (!p) return "";
-  const digits = p.replace(/\D/g, '');
-  return digits.length >= 10 ? digits.slice(-10) : digits;
-};
-
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
-  const [selectedCountry, setSelectedCountry] = useState(COUNTRY_CODES[0]);
-  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '']);
   const [loading, setLoading] = useState(false);
-  const [confirmationResult, setConfirmationResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  const otpRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
+  const [showPassword, setShowPassword] = useState(false);
 
-  const setupRecaptcha = () => {
-    if (!(window as any).recaptchaVerifier) {
-      (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        'size': 'invisible',
-        'callback': () => {}
-      });
-    }
-  };
-
-  const handlePhoneSubmit = async (e: React.FormEvent) => {
+  const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const fullPhone = `${selectedCountry.code}${phone.trim()}`;
-    
-    if (phone.length < 8) {
-      setError("Please enter a valid phone number.");
-      return;
-    }
-
     setLoading(true);
-    
+
     try {
-      if (authMode === 'login') {
-        const userRef = doc(db, "users", fullPhone);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          throw new Error("User not found in Guardian registry.");
+      let firebaseUser;
+      
+      if (authMode === 'register') {
+        if (!name.trim()) throw new Error("Full Name is required for mesh registration.");
+        const credential = await createUserWithEmailAndPassword(auth, email, password);
+        firebaseUser = credential.user;
+
+        // Register in Mesh Registry (Firestore)
+        const userRef = doc(db, "users", email.toLowerCase());
+        await setDoc(userRef, {
+          uid: firebaseUser.uid,
+          email: email.toLowerCase(),
+          name: name.trim(),
+          lastLogin: Date.now()
+        });
+      } else {
+        const credential = await signInWithEmailAndPassword(auth, email, password);
+        firebaseUser = credential.user;
+        
+        // Fetch name from Registry
+        const userSnap = await getDoc(doc(db, "users", email.toLowerCase()));
+        if (userSnap.exists()) {
+          const data = userSnap.data();
+          setName(data.name || 'Mesh User');
         }
       }
 
-      setupRecaptcha();
-      const verifier = (window as any).recaptchaVerifier;
-      const result = await signInWithPhoneNumber(auth, fullPhone, verifier);
-      setConfirmationResult(result);
-      setStep('otp');
-    } catch (err: any) {
-      setError(err.message || "Failed to send verification code.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const code = otp.join('');
-    if (code.length < 4) return;
-    
-    setLoading(true);
-    try {
-      const result = await confirmationResult.confirm(code);
-      const firebaseUser = result.user;
-      const fullPhone = `${selectedCountry.code}${phone.trim()}`;
-
       const activeUser: User = { 
         id: firebaseUser.uid, 
-        phone: fullPhone, 
-        name: authMode === 'register' ? name : 'Mesh User' 
+        phone: email.toLowerCase(), // We reuse 'phone' field as identifier for the UI/Types
+        name: name || 'Mesh User' 
       };
-
-      await setDoc(doc(db, "users", fullPhone), {
-        uid: firebaseUser.uid,
-        phoneNumber: fullPhone,
-        name: activeUser.name,
-        lastLogin: Date.now()
-      }, { merge: true });
 
       onLogin(activeUser);
     } catch (err: any) {
-      setError("Invalid verification code.");
+      console.error(err);
+      let message = "Authentication failed.";
+      if (err.code === 'auth/email-already-in-use') message = "Email already in the Guardian registry.";
+      if (err.code === 'auth/invalid-credential') message = "Invalid email or password.";
+      if (err.code === 'auth/weak-password') message = "Password must be at least 6 characters.";
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -109,63 +79,90 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
-      <div id="recaptcha-container"></div>
-      
-      <div className="w-full max-w-md space-y-12">
+      <div className="w-full max-w-md space-y-10">
         <div className="text-center space-y-4">
-          <div className="inline-block p-7 bg-blue-600 rounded-[3rem] shadow-2xl border-4 border-slate-950">
-            <Shield size={64} className="text-white" />
+          <div className="inline-block p-6 bg-blue-600 rounded-[2.5rem] shadow-[0_0_50px_rgba(37,99,235,0.3)] border-4 border-slate-950">
+            <Shield size={56} className="text-white" />
           </div>
-          <h1 className="text-5xl font-black text-white italic tracking-tighter">Guardian</h1>
+          <h1 className="text-4xl font-black text-white italic tracking-tighter uppercase">Aegis Mesh</h1>
+          <p className="text-[10px] mono text-slate-500 font-bold tracking-[0.4em] uppercase">Tactical AI Safety • Free Tier</p>
         </div>
 
-        <div className="bg-slate-900/50 p-10 rounded-[4rem] border border-slate-800 backdrop-blur-3xl">
-          {step === 'phone' ? (
-            <form onSubmit={handlePhoneSubmit} className="space-y-8">
-              <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
-                <button type="button" onClick={() => setAuthMode('register')} className={`flex-1 py-4 text-xs font-black uppercase rounded-xl transition-all ${authMode === 'register' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-600'}`}>Register</button>
-                <button type="button" onClick={() => setAuthMode('login')} className={`flex-1 py-4 text-xs font-black uppercase rounded-xl transition-all ${authMode === 'login' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-600'}`}>Login</button>
-              </div>
+        <div className="bg-slate-900/40 p-10 rounded-[4rem] border border-slate-800 backdrop-blur-3xl shadow-2xl">
+          <form onSubmit={handleAuth} className="space-y-6">
+            <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
+              <button 
+                type="button" 
+                onClick={() => setAuthMode('register')} 
+                className={`flex-1 py-4 text-[10px] font-black uppercase rounded-xl transition-all ${authMode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600'}`}
+              >
+                Enroll
+              </button>
+              <button 
+                type="button" 
+                onClick={() => setAuthMode('login')} 
+                className={`flex-1 py-4 text-[10px] font-black uppercase rounded-xl transition-all ${authMode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600'}`}
+              >
+                Log In
+              </button>
+            </div>
 
+            <div className="space-y-4">
               {authMode === 'register' && (
                 <div className="relative">
-                  <UserIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={20} />
-                  <input type="text" required placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-3xl py-5 pl-14 pr-6 text-white font-bold outline-none" />
+                  <UserIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
+                  <input 
+                    type="text" required placeholder="Display Name" value={name} 
+                    onChange={(e) => setName(e.target.value)} 
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-5 pl-14 pr-6 text-sm text-white font-bold outline-none focus:border-blue-500/50 transition-all" 
+                  />
                 </div>
               )}
 
-              <div className="flex gap-3">
-                <select value={selectedCountry.code} onChange={(e) => setSelectedCountry(COUNTRY_CODES.find(c => c.code === e.target.value)!)} className="bg-slate-950 border border-slate-800 rounded-3xl p-5 text-white font-black outline-none">
-                  {COUNTRY_CODES.map(c => <option key={c.code} value={c.code}>{c.flag} {c.code}</option>)}
-                </select>
-                <input type="tel" required placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))} className="grow bg-slate-950 border border-slate-800 rounded-3xl py-5 px-6 text-white font-black tracking-widest outline-none" />
+              <div className="relative">
+                <Mail className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
+                <input 
+                  type="email" required placeholder="Mesh Email ID" value={email} 
+                  onChange={(e) => setEmail(e.target.value)} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-5 pl-14 pr-6 text-sm text-white font-black outline-none focus:border-blue-500/50 transition-all" 
+                />
               </div>
 
-              {error && <div className="text-red-400 text-[10px] font-black uppercase flex items-center gap-4 bg-red-500/10 p-4 rounded-3xl border border-red-500/20"><AlertCircle size={20} className="shrink-0" />{error}</div>}
+              <div className="relative">
+                <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
+                <input 
+                  type={showPassword ? "text" : "password"} required placeholder="Mesh Access Key" value={password} 
+                  onChange={(e) => setPassword(e.target.value)} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-5 pl-14 pr-14 text-sm text-white font-black outline-none focus:border-blue-500/50 transition-all tracking-widest" 
+                />
+                <button 
+                  type="button" onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
 
-              <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 py-6 rounded-[2.5rem] text-white font-black uppercase tracking-widest shadow-2xl active:scale-95 transition-all">
-                {loading ? "Authenticating..." : "Initialise Shield"}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleVerify} className="space-y-12">
-              <div className="text-center space-y-2">
-                <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Mesh Authorisation</h3>
-                <p className="text-slate-600 text-[11px] font-black uppercase tracking-widest">Sent to {selectedCountry.code} {phone}</p>
+            {error && (
+              <div className="text-red-400 text-[9px] font-black uppercase flex items-center gap-3 bg-red-500/10 p-4 rounded-2xl border border-red-500/20 animate-in slide-in-from-top-2">
+                <AlertCircle size={16} className="shrink-0" />
+                {error}
               </div>
-              <div className="flex justify-center gap-4">
-                {otp.map((digit, i) => (
-                  <input key={i} ref={otpRefs[i]} type="text" maxLength={1} value={digit} onChange={(e) => {
-                    const n = [...otp]; n[i] = e.target.value.slice(-1); setOtp(n);
-                    if (e.target.value && i < 3) otpRefs[i+1].current?.focus();
-                  }} className="w-16 h-24 bg-slate-950 border-2 border-slate-800 rounded-[1.8rem] text-center text-4xl font-black text-blue-500 shadow-inner outline-none transition-all" />
-                ))}
-              </div>
-              <button type="submit" className="w-full bg-blue-600 py-6 rounded-[2.5rem] text-white font-black uppercase shadow-xl active:scale-95 transition-all">Verify Mesh Identity</button>
-              <button type="button" onClick={() => setStep('phone')} className="w-full text-slate-700 text-[10px] font-black uppercase hover:text-white transition-colors">Change Number</button>
-            </form>
-          )}
+            )}
+
+            <button 
+              type="submit" disabled={loading} 
+              className="w-full bg-blue-600 hover:bg-blue-500 py-6 rounded-[2rem] text-white font-black uppercase tracking-[0.2em] text-xs shadow-[0_15px_30px_rgba(37,99,235,0.4)] active:scale-95 transition-all disabled:opacity-50"
+            >
+              {loading ? "Decrypting..." : (authMode === 'register' ? "Initialise Mesh Node" : "Access Feed")}
+            </button>
+          </form>
         </div>
+        
+        <p className="text-center text-[9px] text-slate-700 font-black uppercase tracking-widest">
+          Secure Mesh Communication Layer • No Billing Required
+        </p>
       </div>
     </div>
   );
