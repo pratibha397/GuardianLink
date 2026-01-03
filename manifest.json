@@ -1,0 +1,19 @@
+
+{
+  "short_name": "Guardian",
+  "name": "GuardianVoice Safety",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/1063/1063376.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "display": "standalone",
+  "scope": "/",
+  "theme_color": "#2563eb",
+  "description": "Voice-activated emergency safety app."
+}
