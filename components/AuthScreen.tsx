@@ -1,6 +1,7 @@
 
-import { AlertCircle, MessageSquare, Shield, User as UserIcon } from 'lucide-react';
+import { AlertCircle, Shield, User as UserIcon } from 'lucide-react';
 import React, { useRef, useState } from 'react';
+import { auth, db, doc, getDoc, RecaptchaVerifier, setDoc, signInWithPhoneNumber } from '../services/firebase';
 import { User } from '../types';
 
 interface AuthScreenProps {
@@ -13,12 +14,6 @@ const COUNTRY_CODES = [
   { code: '+44', country: 'UK', flag: '🇬🇧' },
 ];
 
-export const GLOBAL_REGISTRY_KEY = 'guardian_link_network_db';
-
-/**
- * Robust Normalization: Strips non-digits and uses last 10 digits.
- * Solves the registration matching bug.
- */
 export const normalizePhone = (p: string) => {
   if (!p) return "";
   const digits = p.replace(/\D/g, '');
@@ -33,17 +28,24 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [name, setName] = useState('');
   const [otp, setOtp] = useState(['', '', '', '']);
   const [loading, setLoading] = useState(false);
-  const [demoOtp, setDemoOtp] = useState('');
-  const [showDemoToast, setShowDemoToast] = useState(false);
+  const [confirmationResult, setConfirmationResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   
   const otpRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
 
-  const handlePhoneSubmit = (e: React.FormEvent) => {
+  const setupRecaptcha = () => {
+    if (!(window as any).recaptchaVerifier) {
+      (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+        'size': 'invisible',
+        'callback': () => {}
+      });
+    }
+  };
+
+  const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const fullPhone = `${selectedCountry.code}${phone}`;
-    const normalizedTarget = normalizePhone(fullPhone);
+    const fullPhone = `${selectedCountry.code}${phone.trim()}`;
     
     if (phone.length < 8) {
       setError("Please enter a valid phone number.");
@@ -52,74 +54,63 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
     setLoading(true);
     
-    const db = JSON.parse(localStorage.getItem(GLOBAL_REGISTRY_KEY) || '[]');
-    const existingUser = db.find((u: any) => normalizePhone(u.phone) === normalizedTarget);
-
-    if (authMode === 'register' && existingUser) {
-      setLoading(false);
-      setError("Number already registered. Please login.");
-      return;
-    }
-
-    if (authMode === 'login' && !existingUser) {
-      setLoading(false);
-      setError("User not found in Guardian mesh.");
-      return;
-    }
-
-    const newCode = Math.floor(1000 + Math.random() * 9000).toString();
-    setDemoOtp(newCode);
-
-    setTimeout(() => {
-      setLoading(false);
-      setStep('otp');
-      setShowDemoToast(true);
-      setTimeout(() => setShowDemoToast(false), 10000);
-    }, 1000);
-  };
-
-  const handleVerify = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (otp.join('') !== demoOtp) {
-      setError("Incorrect security code.");
-      return;
-    }
-    
-    setLoading(true);
-    const fullPhone = `${selectedCountry.code}${phone}`;
-    const normalizedTarget = normalizePhone(fullPhone);
-
-    setTimeout(() => {
-      const db = JSON.parse(localStorage.getItem(GLOBAL_REGISTRY_KEY) || '[]');
-      let activeUser: User;
-
-      if (authMode === 'register') {
-        activeUser = { id: Date.now().toString(), phone: fullPhone, name };
-        db.push(activeUser);
-        localStorage.setItem(GLOBAL_REGISTRY_KEY, JSON.stringify(db));
-      } else {
-        activeUser = db.find((u: any) => normalizePhone(u.phone) === normalizedTarget);
+    try {
+      if (authMode === 'login') {
+        const userRef = doc(db, "users", fullPhone);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists()) {
+          throw new Error("User not found in Guardian registry.");
+        }
       }
 
+      setupRecaptcha();
+      const verifier = (window as any).recaptchaVerifier;
+      const result = await signInWithPhoneNumber(auth, fullPhone, verifier);
+      setConfirmationResult(result);
+      setStep('otp');
+    } catch (err: any) {
+      setError(err.message || "Failed to send verification code.");
+    } finally {
       setLoading(false);
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = otp.join('');
+    if (code.length < 4) return;
+    
+    setLoading(true);
+    try {
+      const result = await confirmationResult.confirm(code);
+      const firebaseUser = result.user;
+      const fullPhone = `${selectedCountry.code}${phone.trim()}`;
+
+      const activeUser: User = { 
+        id: firebaseUser.uid, 
+        phone: fullPhone, 
+        name: authMode === 'register' ? name : 'Mesh User' 
+      };
+
+      await setDoc(doc(db, "users", fullPhone), {
+        uid: firebaseUser.uid,
+        phoneNumber: fullPhone,
+        name: activeUser.name,
+        lastLogin: Date.now()
+      }, { merge: true });
+
       onLogin(activeUser);
-    }, 800);
+    } catch (err: any) {
+      setError("Invalid verification code.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
-      {showDemoToast && (
-        <div className="fixed top-8 left-1/2 -translate-x-1/2 w-full max-w-xs z-50 animate-bounce">
-          <div className="bg-blue-600 p-5 rounded-3xl shadow-2xl flex items-center gap-4">
-            <MessageSquare size={24} className="text-white" />
-            <div>
-              <p className="text-[10px] text-white/70 font-black uppercase">Guardian SMS</p>
-              <p className="text-lg text-white font-black">Code: {demoOtp}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
+      <div id="recaptcha-container"></div>
+      
       <div className="w-full max-w-md space-y-12">
         <div className="text-center space-y-4">
           <div className="inline-block p-7 bg-blue-600 rounded-[3rem] shadow-2xl border-4 border-slate-950">

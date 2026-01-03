@@ -1,8 +1,9 @@
 
+import { DataSnapshot, onValue, push, ref, set } from 'firebase/database';
 import { Activity, Clock, ExternalLink, MessageCircle, Navigation, Radio, Send, ShieldAlert } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
+import { rtdb } from '../services/firebase';
 import { AlertLog, User as AppUser, ChatMessage } from '../types';
-import { normalizePhone } from './AuthScreen';
 
 interface AlertHistoryProps {
   logs: AlertLog[];
@@ -13,41 +14,44 @@ interface AlertHistoryProps {
 const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
   const [incomingAlerts, setIncomingAlerts] = useState<AlertLog[]>([]);
   const [replyText, setReplyText] = useState<{ [key: string]: string }>({});
-  const [lastSync, setLastSync] = useState<number>(Date.now());
   const chatEndRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
   useEffect(() => {
-    const fetchUpdates = () => {
-      const all: AlertLog[] = JSON.parse(localStorage.getItem('guardian_voice_global_alerts') || '[]');
-      const myPhone = normalizePhone(user.phone);
-      const active = all.filter(a => a.recipients.includes(myPhone) && a.isLive);
-      setIncomingAlerts(active);
-      setLastSync(Date.now());
-    };
-    fetchUpdates();
-    const interval = setInterval(fetchUpdates, 1500);
-    return () => clearInterval(interval);
+    // Listen to the global alerts node in Realtime DB
+    const alertsRef = ref(rtdb, 'alerts');
+    const unsubscribe = onValue(alertsRef, (snapshot: DataSnapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        // Filter alerts where current user is a listed recipient
+        const active = Object.values(data).filter((a: any) => 
+          a.recipients?.includes(user.phone) && a.isLive
+        ) as AlertLog[];
+        setIncomingAlerts(active);
+      } else {
+        setIncomingAlerts([]);
+      }
+    });
+
+    return () => unsubscribe();
   }, [user.phone]);
 
-  const sendReply = (alertId: string) => {
+  const sendReply = async (alertId: string) => {
     const text = replyText[alertId];
     if (!text?.trim()) return;
 
-    const GLOBAL_KEY = 'guardian_voice_global_alerts';
-    const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_KEY) || '[]');
-    const idx = all.findIndex(a => a.id === alertId);
-    if (idx !== -1) {
-      const newMsg: ChatMessage = {
-        id: Date.now().toString(),
-        senderName: user.name,
-        senderPhone: user.phone,
-        text,
-        timestamp: Date.now()
-      };
-      all[idx].updates.push(newMsg);
-      localStorage.setItem(GLOBAL_KEY, JSON.stringify(all));
-      setReplyText({ ...replyText, [alertId]: '' });
-    }
+    const msg: ChatMessage = {
+      id: Date.now().toString(),
+      senderName: user.name,
+      senderPhone: user.phone,
+      text,
+      timestamp: Date.now()
+    };
+
+    const updatesRef = ref(rtdb, `alerts/${alertId}/updates`);
+    const newMessageRef = push(updatesRef);
+    await set(newMessageRef, msg);
+    
+    setReplyText({ ...replyText, [alertId]: '' });
   };
 
   return (
@@ -119,8 +123,8 @@ const AlertHistory: React.FC<AlertHistoryProps> = ({ user }) => {
                 <div className="bg-blue-600/10 border-2 border-blue-500/10 p-5 rounded-[2.2rem] text-[12px] text-blue-100 italic leading-relaxed shadow-inner border-dashed">
                   Intercept: {alert.message}
                 </div>
-                {alert.updates.map(msg => (
-                  <div key={msg.id} className={`p-5 rounded-[2.2rem] text-[13px] shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-300 border ${normalizePhone(msg.senderPhone) === normalizePhone(user.phone) ? 'ml-auto bg-blue-600 text-white border-blue-400/30 rounded-br-none' : 'bg-slate-800 text-slate-200 border-slate-700 rounded-bl-none mr-12'}`}>
+                {alert.updates && Object.values(alert.updates).map((msg: any) => (
+                  <div key={msg.id} className={`p-5 rounded-[2.2rem] text-[13px] shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-300 border ${msg.senderPhone === user.phone ? 'ml-auto bg-blue-600 text-white border-blue-400/30 rounded-br-none' : 'bg-slate-800 text-slate-200 border-slate-700 rounded-bl-none mr-12'}`}>
                     <div className="flex justify-between items-center mb-1.5 opacity-60 text-[8px] font-black uppercase tracking-widest">
                       <span>{msg.senderName}</span>
                       <span>{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>

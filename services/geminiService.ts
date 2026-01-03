@@ -53,16 +53,13 @@ export class GeminiVoiceMonitor {
   async start() {
     try {
       this.isActive = true;
-      // CRITICAL: Always use process.env.API_KEY directly when initializing the GoogleGenAI client instance.
       if (!process.env.API_KEY) throw new Error('API Key missing.');
 
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       
-      // Monitor context state (important for background resume)
       this.inputAudioContext.onstatechange = () => {
         if (this.isActive && this.inputAudioContext?.state === 'suspended') {
-          console.log('Audio Context suspended. Resuming...');
           this.inputAudioContext?.resume();
         }
       };
@@ -76,8 +73,10 @@ export class GeminiVoiceMonitor {
             this.setupMicrophone();
           },
           onmessage: async (message: LiveServerMessage) => {
-            if (message.toolCall) {
-              for (const fc of message.toolCall?.functionCalls) {
+            // FIX TS18048: Using optional chaining on toolCall
+            const functionCalls = message.toolCall?.functionCalls;
+            if (functionCalls) {
+              for (const fc of functionCalls) {
                 if (fc.name === 'triggerEmergencyAlert') {
                   this.options.onAlert((fc.args as any).detectedPhrase);
                   this.sessionPromise?.then(session => {
@@ -120,7 +119,6 @@ export class GeminiVoiceMonitor {
     const source = this.inputAudioContext.createMediaStreamSource(this.stream);
     this.scriptProcessor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
     this.scriptProcessor.onaudioprocess = (event) => {
-      // Auto-resume context if suspended by browser
       if (this.inputAudioContext?.state === 'suspended') {
         this.inputAudioContext.resume();
       }

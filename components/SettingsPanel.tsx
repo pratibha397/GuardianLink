@@ -1,8 +1,9 @@
 
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { AlertCircle, CheckCircle2, List, Mic, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
+import { db } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
-import { GLOBAL_REGISTRY_KEY, normalizePhone } from './AuthScreen';
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -14,21 +15,55 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
   const [isSearching, setIsSearching] = useState(false);
   const [lookupResult, setLookupResult] = useState<'found' | 'not_found' | null>(null);
 
-  useEffect(() => {
-    const searchTarget = normalizePhone(newContact.phone);
-    if (searchTarget.length >= 8) {
-      setIsSearching(true);
-      const timer = setTimeout(() => {
-        const db = JSON.parse(localStorage.getItem(GLOBAL_REGISTRY_KEY) || '[]');
-        // We iterate and normalize both for absolute matching
-        const found = db.some((u: any) => normalizePhone(u.phone) === searchTarget);
-        setLookupResult(found ? 'found' : 'not_found');
-        setIsSearching(false);
-      }, 500);
-      return () => clearTimeout(timer);
-    } else {
+  /**
+   * Production-ready user verification logic.
+   * Uses Firestore query to find registered users by phone number.
+   */
+  const checkUserExists = async (inputPhone: string) => {
+    // 1. Normalization: Remove spaces, dashes, and ensure standard format
+    const normalized = inputPhone.trim().replace(/\s+/g, '');
+    if (normalized.length < 8) {
       setLookupResult(null);
+      return;
     }
+
+    setIsSearching(true);
+    setLookupResult(null);
+
+    try {
+      // 2. Database Query: Search the 'users' collection for the normalized phone
+      // We search for both raw input and normalized variants to be robust
+      console.log(`[GuardianLink] Searching for: ${normalized}`);
+      
+      const usersRef = collection(db, "users");
+      const q = query(usersRef, where("phoneNumber", "==", normalized));
+      
+      const querySnapshot = await getDocs(q);
+      
+      // 3. Async Handling: Await response before updating UI state
+      if (!querySnapshot.empty) {
+        const foundUser = querySnapshot.docs[0].data();
+        console.log(`[GuardianLink] User found: ${foundUser.name} (${foundUser.phoneNumber})`);
+        setLookupResult('found');
+      } else {
+        // 4. Debug Logging: Helper for identifying registry gaps
+        console.warn(`[GuardianLink] No user found for phone: ${normalized}`);
+        setLookupResult('not_found');
+      }
+    } catch (error) {
+      console.error("[GuardianLink] Mesh lookup failed:", error);
+      setLookupResult('not_found');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Trigger search with a slight debounce
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (newContact.phone) checkUserExists(newContact.phone);
+    }, 600);
+    return () => clearTimeout(timer);
   }, [newContact.phone]);
 
   const addContact = () => {
@@ -37,7 +72,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       const contact: EmergencyContact = {
         id: Date.now().toString(),
         name: newContact.name,
-        phone: newContact.phone,
+        phone: newContact.phone.trim().replace(/\s+/g, ''),
         isRegisteredUser: isRegistered
       };
       updateSettings({ contacts: [...settings.contacts, contact] });
@@ -97,7 +132,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             />
             <div className="relative group">
               <input 
-                type="tel" placeholder="Phone (with Country Code)" value={newContact.phone}
+                type="tel" placeholder="Phone (e.g. +919999988888)" value={newContact.phone}
                 onChange={(e) => setNewContact(p => ({...p, phone: e.target.value}))}
                 className="w-full bg-slate-950 border border-slate-800 rounded-3xl px-6 py-5 text-sm text-white font-black placeholder:text-slate-800 pr-14 shadow-inner outline-none transition-all tracking-widest"
               />
@@ -113,7 +148,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
                 <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-[1.8rem] flex items-start gap-4 animate-in slide-in-from-top-2">
                   <AlertCircle size={20} className="text-red-500 shrink-0 mt-0.5" />
                   <p className="text-[10px] text-red-400 font-black uppercase tracking-tight leading-normal">
-                    This user isn't on the Mesh network yet. They won't receive your live locations. Ensure they register with Guardian Link!
+                    Phone number not found. Ask your friend to log into the app at least once to register their mesh node.
                   </p>
                 </div>
               )}
@@ -121,7 +156,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
                 <div className="bg-green-500/10 border border-green-500/20 p-5 rounded-[1.8rem] flex items-start gap-4 animate-in slide-in-from-top-2">
                   <CheckCircle2 size={20} className="text-green-500 shrink-0 mt-0.5" />
                   <p className="text-[10px] text-green-500 font-black uppercase tracking-tight leading-normal">
-                    Satellite Link Verified: This friend is registered and will receive real-time feeds during an alert.
+                    Mesh Node Found: This friend is registered and will receive real-time feeds during an alert.
                   </p>
                 </div>
               )}

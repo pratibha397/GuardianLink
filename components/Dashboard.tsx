@@ -1,9 +1,10 @@
 
 import { AlertCircle, Lock, MapPin, MessageCircle, Navigation, Power, Radio, Send, ShieldAlert, ShieldCheck, Unlock, Users } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
+import { LocationCoords, startLocationTracking, stopLocationTracking } from '../services/LocationService';
+import { DataSnapshot, onValue, push, ref, rtdb, set, update } from '../services/firebase';
 import { GeminiVoiceMonitor } from '../services/geminiService';
 import { AlertLog, AppSettings, User as AppUser, ChatMessage } from '../types';
-import { normalizePhone } from './AuthScreen';
 
 interface DashboardProps {
   user: AppUser;
@@ -13,40 +14,68 @@ interface DashboardProps {
   isEmergency: boolean;
 }
 
-const GLOBAL_ALERTS_KEY = 'guardian_voice_global_alerts';
-
 const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, onAlertTriggered, isEmergency }) => {
-  const [currentCoords, setCurrentCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [currentCoords, setCurrentCoords] = useState<LocationCoords | null>(null);
   const [chatMessage, setChatMessage] = useState('');
   const [activeAlert, setActiveAlert] = useState<AlertLog | null>(null);
   const [wakeLock, setWakeLock] = useState<any>(null);
   const monitorRef = useRef<GeminiVoiceMonitor | null>(null);
-  const watchIdRef = useRef<number | null>(null);
+  const watchIdRef = useRef<number>(-1);
   const [error, setError] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  
+  // Web Speech API Fallback
+  const recognitionRef = useRef<any>(null);
 
   const registeredContacts = settings.contacts.filter(c => c.isRegisteredUser);
 
-  // Sync state with shared mesh database
+  // Hybrid Voice Detection: Web Speech API for "HELP"
+  useEffect(() => {
+    if (settings.isListening && !isEmergency) {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.lang = 'en-US';
+        recognitionRef.current.onresult = (event: any) => {
+          const last = event.results.length - 1;
+          const text = event.results[last][0].transcript.toUpperCase();
+          if (text.includes('HELP') || text.includes(settings.triggerPhrase.toUpperCase())) {
+            triggerAlert(false);
+          }
+        };
+        recognitionRef.current.start();
+      }
+    } else {
+      recognitionRef.current?.stop();
+    }
+    return () => recognitionRef.current?.stop();
+  }, [settings.isListening, isEmergency, settings.triggerPhrase]);
+
   useEffect(() => {
     if (!isEmergency) {
       setActiveAlert(null);
       return;
     }
-    const syncLoop = () => {
-      const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
-      const mine = all.find(a => normalizePhone(a.senderPhone) === normalizePhone(user.phone) && a.isLive);
-      if (mine) setActiveAlert(mine);
-    };
-    const interval = setInterval(syncLoop, 1000); 
-    return () => clearInterval(interval);
+    
+    const alertsRef = ref(rtdb, 'alerts');
+    const unsubscribe = onValue(alertsRef, (snapshot: DataSnapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const mine = Object.values(data).find((a: any) => 
+          a.senderPhone === user.phone && a.isLive
+        ) as AlertLog;
+        if (mine) setActiveAlert(mine);
+      }
+    });
+
+    return () => unsubscribe();
   }, [isEmergency, user.phone]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeAlert?.updates]);
 
-  // Screen Wake Lock API
   useEffect(() => {
     const requestWakeLock = async () => {
       if ('wakeLock' in navigator) {
@@ -57,44 +86,50 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       }
     };
     if (settings.isListening || isEmergency) requestWakeLock();
-    else if (wakeLock) wakeLock.release().then(() => setWakeLock(null));
+    else if (wakeLock) {
+      wakeLock.release().then(() => setWakeLock(null));
+    }
   }, [settings.isListening, isEmergency]);
 
-  // Live High-Frequency Geolocation
   useEffect(() => {
     if (settings.isListening || isEmergency) {
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        (pos) => {
-          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      // FIX TS7006: Explicitly typing the parameters
+      watchIdRef.current = startLocationTracking(
+        (coords: LocationCoords) => {
           setCurrentCoords(coords);
+          setError(null);
           
-          if (isEmergency) {
-            const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
-            const idx = all.findIndex(a => normalizePhone(a.senderPhone) === normalizePhone(user.phone) && a.isLive);
-            if (idx !== -1) {
-              all[idx].location = coords; 
-              localStorage.setItem(GLOBAL_ALERTS_KEY, JSON.stringify(all));
-            }
+          if (isEmergency && activeAlert) {
+            update(ref(rtdb, `alerts/${activeAlert.id}`), {
+              location: { lat: coords.lat, lng: coords.lng }
+            });
+            // Update live_locations node for simpler dashboard tracking
+            set(ref(rtdb, `live_locations/${user.id}`), {
+              lat: coords.lat,
+              lng: coords.lng,
+              timestamp: Date.now()
+            });
           }
         },
-        (err) => setError("Mesh Location Error: Geolocation disabled."),
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        (errMessage: string) => setError(errMessage)
       );
-    } else if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
+    } else {
+      stopLocationTracking(watchIdRef.current);
+      watchIdRef.current = -1;
     }
-    return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
-  }, [settings.isListening, isEmergency, user.phone]);
+    return () => stopLocationTracking(watchIdRef.current);
+  }, [settings.isListening, isEmergency, user.phone, activeAlert]);
 
-  const triggerAlert = (manual = false) => {
+  const triggerAlert = async (manual = false) => {
     if (registeredContacts.length === 0) {
-      setError("Shield Blocked: No registered Guardians found in your mesh.");
+      setError("Shield Offline: No verified Guardians linked. Update mesh links in Config.");
       return;
     }
 
-    const startAlert = (loc: {lat: number, lng: number} | null) => {
+    const startAlert = async (loc: {lat: number, lng: number} | null) => {
+      const alertId = Date.now().toString();
       const newLog: AlertLog = {
-        id: Date.now().toString(),
+        id: alertId,
         senderPhone: user.phone,
         senderName: user.name,
         timestamp: Date.now(),
@@ -102,39 +137,43 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
         message: manual ? "🚨 MANUAL SOS TRIGGERED 🚨" : "🚨 VOICE ACTIVATED ALERT 🚨",
         updates: [],
         isLive: true,
-        recipients: registeredContacts.map(c => normalizePhone(c.phone))
+        recipients: registeredContacts.map(c => c.phone)
       };
+
+      await set(ref(rtdb, `alerts/${alertId}`), newLog);
       onAlertTriggered(newLog);
       setActiveAlert(newLog);
       setError(null);
     };
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => startAlert({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => startAlert(currentCoords),
-      { enableHighAccuracy: true }
-    );
+    if (currentCoords) {
+      startAlert({ lat: currentCoords.lat, lng: currentCoords.lng });
+    } else {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => startAlert({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => startAlert(null),
+        { enableHighAccuracy: true }
+      );
+    }
   };
 
-  const sendChatMessage = (e: React.FormEvent) => {
+  const sendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatMessage.trim() || !activeAlert) return;
 
-    const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
-    const idx = all.findIndex(a => a.id === activeAlert.id);
-    if (idx !== -1) {
-      const msg: ChatMessage = {
-        id: Date.now().toString(),
-        senderName: user.name,
-        senderPhone: user.phone,
-        text: chatMessage,
-        timestamp: Date.now(),
-        location: currentCoords || undefined
-      };
-      all[idx].updates.push(msg);
-      localStorage.setItem(GLOBAL_ALERTS_KEY, JSON.stringify(all));
-      setChatMessage('');
-    }
+    const msg: ChatMessage = {
+      id: Date.now().toString(),
+      senderName: user.name,
+      senderPhone: user.phone,
+      text: chatMessage,
+      timestamp: Date.now(),
+      location: currentCoords ? { lat: currentCoords.lat, lng: currentCoords.lng } : undefined
+    };
+
+    const updatesRef = ref(rtdb, `alerts/${activeAlert.id}/updates`);
+    const newMessageRef = push(updatesRef);
+    await set(newMessageRef, msg);
+    setChatMessage('');
   };
 
   const toggleListening = async () => {
@@ -160,11 +199,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
       <div className={`p-4 rounded-3xl flex items-center justify-between border ${wakeLock ? 'bg-green-500/10 border-green-500/20 text-green-500 shadow-lg' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
         <div className="flex items-center gap-3">
           {wakeLock ? <Lock size={14} className="animate-pulse" /> : <Unlock size={14} />}
-          <span className="text-[10px] font-black uppercase tracking-widest">{wakeLock ? 'Mesh Active' : 'Shield Standby'}</span>
+          <span className="text-[10px] font-black uppercase tracking-widest">{wakeLock ? 'Screen Lock Active' : 'Standby Mode'}</span>
         </div>
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${currentCoords ? 'bg-blue-500 animate-pulse' : 'bg-slate-700'}`} />
-          <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'Live GPS' : 'No Signal'}</span>
+          <span className="text-[8px] font-black uppercase tracking-widest">{currentCoords ? 'GPS Live' : 'No Signal'}</span>
         </div>
       </div>
 
@@ -175,7 +214,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
               <Power size={80} className={settings.isListening ? 'text-white' : 'text-slate-600'} />
             </button>
             <div className="mt-12 text-center space-y-3">
-              <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase">{settings.isListening ? 'AI Guard On' : 'AI Guard Off'}</h2>
+              <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-none">{settings.isListening ? 'AI Guard On' : 'AI Guard Off'}</h2>
               <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em] leading-relaxed px-6">
                 {settings.isListening ? `Listening for: "${settings.triggerPhrase}"` : 'Touch icon to begin voice monitoring'}
               </p>
@@ -188,20 +227,20 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
           >
             <div className="bg-white/20 p-4 rounded-3xl group-hover:rotate-12 transition-transform"><ShieldAlert size={44} className="text-white" /></div>
             <div className="text-left">
-              <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase leading-none">Manual SOS</h3>
-              <p className="text-red-100 text-[10px] font-black uppercase tracking-widest mt-1 opacity-70">Immediate Mesh Activation</p>
+              <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase leading-none">Panic SOS</h3>
+              <p className="text-red-100 text-[10px] font-black uppercase tracking-widest mt-1 opacity-70">Manual Mesh Activation</p>
             </div>
           </button>
         </>
       ) : (
         <div className="space-y-5 animate-in slide-in-from-bottom-10 duration-700">
-          <div className="bg-red-600 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden border-2 border-red-400/30">
+          <div className="bg-red-600 p-8 rounded-[3rem] shadow-[0_40px_100px_rgba(220,38,38,0.4)] relative overflow-hidden border-2 border-red-400/30">
              <div className="flex items-center gap-5 relative z-10">
                 <div className="bg-white p-4 rounded-3xl text-red-600 shadow-2xl rotate-6"><ShieldCheck size={40} /></div>
                 <div className="flex-1 text-white">
                   <h4 className="font-black text-2xl italic tracking-tighter leading-tight uppercase">Emergency Active</h4>
                   <div className="flex items-center gap-2 mt-1.5 text-[10px] font-black uppercase bg-white/20 w-fit px-3 py-1 rounded-full backdrop-blur-md">
-                    <Radio size={12} className="animate-pulse" /> Live Tracking Feed Active
+                    <Radio size={12} className="animate-pulse" /> Live Mesh Broadcast On
                   </div>
                 </div>
              </div>
@@ -218,8 +257,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
               <div className="bg-blue-600/10 border-2 border-blue-500/10 p-5 rounded-[2rem] text-[11px] text-blue-100 italic leading-relaxed shadow-inner border-dashed">
                 {activeAlert?.message}
               </div>
-              {activeAlert?.updates.map(msg => (
-                <div key={msg.id} className={`max-w-[88%] p-5 rounded-[2rem] text-[13px] shadow-2xl animate-in zoom-in duration-300 ${normalizePhone(msg.senderPhone) === normalizePhone(user.phone) ? 'ml-auto bg-blue-600 text-white rounded-br-none' : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700'}`}>
+              {activeAlert?.updates && Object.values(activeAlert.updates).map((msg: any) => (
+                <div key={msg.id} className={`max-w-[88%] p-5 rounded-[2rem] text-[13px] shadow-2xl animate-in zoom-in duration-300 ${msg.senderPhone === user.phone ? 'ml-auto bg-blue-600 text-white rounded-br-none' : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700'}`}>
                   <div className="flex justify-between items-center mb-1.5 opacity-60 text-[8px] font-black uppercase tracking-widest">
                     <span>{msg.senderName}</span>
                     <span>{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
@@ -233,7 +272,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
             <form onSubmit={sendChatMessage} className="mt-6 flex gap-3 relative">
               <input 
                 type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} 
-                placeholder="Broadcast info..." 
+                placeholder="Broadcast status..." 
                 className="grow bg-slate-950 border border-slate-800 rounded-[2rem] py-5 px-7 text-sm text-white font-medium focus:border-blue-500 shadow-inner outline-none transition-all" 
               />
               <button type="submit" className="p-5 bg-blue-600 text-white rounded-2xl shadow-xl hover:bg-blue-500 active:scale-95 transition-all">
@@ -263,8 +302,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, o
           <div className="bg-slate-900 p-8 rounded-[3.5rem] border border-slate-800 h-48 flex flex-col justify-between shadow-2xl group hover:border-blue-500/30 transition-all cursor-pointer">
             <div className={`p-4 rounded-2xl w-fit ${currentCoords ? 'bg-blue-600/10 text-blue-500 animate-pulse' : 'bg-slate-800 text-slate-700'}`}><MapPin size={32} /></div>
             <div>
-              <div className="text-xl font-black text-white italic leading-tight tracking-tighter truncate">{currentCoords ? 'GPS Live' : 'Locating...'}</div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-2 block">Satellite Mesh</span>
+              <div className="text-xl font-black text-white italic leading-tight tracking-tighter truncate">{currentCoords ? 'Satellite Lock' : 'Locating...'}</div>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mt-2 block">Accuracy: {currentCoords?.accuracy.toFixed(0)}m</span>
             </div>
           </div>
         </div>

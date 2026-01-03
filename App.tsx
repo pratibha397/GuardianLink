@@ -5,11 +5,11 @@ import AlertHistory from './components/AlertHistory';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import SettingsPanel from './components/SettingsPanel';
+import { DataSnapshot, onValue, ref, rtdb } from './services/firebase';
 import { AlertLog, AppSettings, AppView, User } from './types';
 
 const STORAGE_KEY = 'guardian_voice_settings';
 const AUTH_KEY = 'guardian_voice_user';
-const GLOBAL_ALERTS_KEY = 'guardian_voice_global_alerts';
 
 const DEFAULT_SETTINGS: AppSettings = {
   triggerPhrase: 'I am in danger',
@@ -20,7 +20,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<AppView>(AppView.DASHBOARD);
+  const [currentView, setCurrentView] = useState<string>('login');
+  const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isEmergencyActive, setIsEmergencyActive] = useState(false);
   const [incomingAlert, setIncomingAlert] = useState<AlertLog | null>(null);
@@ -28,7 +29,11 @@ const App: React.FC = () => {
   useEffect(() => {
     const savedUser = localStorage.getItem(AUTH_KEY);
     if (savedUser) {
-      try { setUser(JSON.parse(savedUser)); } catch (e) {}
+      try { 
+        const parsedUser = JSON.parse(savedUser);
+        setUser(parsedUser);
+        setCurrentView('dashboard');
+      } catch (e) {}
     }
 
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -42,37 +47,52 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!user) return;
-    const checkIncoming = () => {
-      const all: AlertLog[] = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
-      // Only show alert notification if I am a recipient and it's NOT my own alert
-      const alertForMe = all.find(a => 
-        a.recipients.includes(user.phone) && 
-        a.senderPhone !== user.phone && 
-        a.isLive
-      );
-      setIncomingAlert(alertForMe || null);
-    };
-    const interval = setInterval(checkIncoming, 2000);
-    return () => clearInterval(interval);
+    
+    const alertsRef = ref(rtdb, 'alerts');
+    const unsubscribe = onValue(alertsRef, (snapshot: DataSnapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const activeAlerts = Object.values(data) as AlertLog[];
+        const alertForMe = activeAlerts.find(a => 
+          a.recipients?.includes(user.phone) && 
+          a.senderPhone !== user.phone && 
+          a.isLive
+        );
+        setIncomingAlert(alertForMe || null);
+      } else {
+        setIncomingAlert(null);
+      }
+    });
+
+    return () => unsubscribe();
   }, [user]);
 
   useEffect(() => {
-    if (user) localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, isListening: false }));
+    if (user) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, isListening: false }));
+    }
   }, [settings, user]);
 
   const handleLogout = () => { 
     localStorage.removeItem(AUTH_KEY); 
     setUser(null); 
-    setView(AppView.DASHBOARD);
+    setCurrentView('login');
+    setAppView(AppView.DASHBOARD);
+  };
+
+  const handleLoginSuccess = (u: User) => {
+    setUser(u);
+    localStorage.setItem(AUTH_KEY, JSON.stringify(u));
+    setCurrentView('dashboard');
   };
 
   const broadcastAlert = (log: AlertLog) => {
     setIsEmergencyActive(true);
-    const current = JSON.parse(localStorage.getItem(GLOBAL_ALERTS_KEY) || '[]');
-    localStorage.setItem(GLOBAL_ALERTS_KEY, JSON.stringify([log, ...current]));
   };
 
-  if (!user) return <AuthScreen onLogin={(u) => { setUser(u); localStorage.setItem(AUTH_KEY, JSON.stringify(u)); }} />;
+  if (currentView === 'login') {
+    return <AuthScreen onLogin={handleLoginSuccess} />;
+  }
 
   return (
     <div className="min-h-screen flex flex-col max-w-md mx-auto bg-slate-950 shadow-2xl relative border-x border-slate-900 text-slate-100 font-sans">
@@ -83,7 +103,7 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="font-black text-xl italic tracking-tighter leading-none">Guardian</h1>
-            <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mt-1">Network ID: {user.name}</p>
+            <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mt-1">{user?.name}</p>
           </div>
         </div>
         <button onClick={handleLogout} className="p-2.5 bg-slate-900 rounded-xl text-slate-600 hover:text-red-500 transition-colors"><LogOut size={16} /></button>
@@ -98,14 +118,29 @@ const App: React.FC = () => {
                <p className="text-sm text-white font-black">{incomingAlert.senderName}</p>
             </div>
           </div>
-          <button onClick={() => setView(AppView.GUARDIAN_LINK)} className="bg-white text-blue-600 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg active:scale-95 transition-all">Intercept</button>
+          <button onClick={() => setAppView(AppView.GUARDIAN_LINK)} className="bg-white text-blue-600 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg active:scale-95 transition-all">Intercept</button>
         </div>
       )}
 
       <main className="flex-1 overflow-y-auto p-6 pb-28">
-        {view === AppView.DASHBOARD && <Dashboard user={user} settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} onAlertTriggered={broadcastAlert} isEmergency={isEmergencyActive} />}
-        {view === AppView.SETTINGS && <SettingsPanel settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} />}
-        {view === AppView.GUARDIAN_LINK && <AlertHistory logs={[]} clearLogs={() => {}} user={user} />}
+        {appView === AppView.DASHBOARD && user && (
+          <Dashboard 
+            user={user} 
+            settings={settings} 
+            updateSettings={(s) => setSettings(p => ({...p, ...s}))} 
+            onAlertTriggered={broadcastAlert} 
+            isEmergency={isEmergencyActive} 
+          />
+        )}
+        {appView === AppView.SETTINGS && (
+          <SettingsPanel 
+            settings={settings} 
+            updateSettings={(s) => setSettings(p => ({...p, ...s}))} 
+          />
+        )}
+        {appView === AppView.GUARDIAN_LINK && user && (
+          <AlertHistory logs={[]} clearLogs={() => {}} user={user} />
+        )}
       </main>
 
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-5 bg-slate-950/90 backdrop-blur-xl border-t border-slate-900 z-40">
@@ -115,7 +150,7 @@ const App: React.FC = () => {
             { id: AppView.GUARDIAN_LINK, icon: Activity, label: 'Feed' },
             { id: AppView.SETTINGS, icon: Settings, label: 'Config' }
           ].map(item => (
-            <button key={item.id} onClick={() => setView(item.id)} className={`flex flex-col items-center gap-1.5 px-7 py-3 rounded-3xl transition-all ${view === item.id ? 'bg-blue-600 text-white shadow-[0_10px_25px_rgba(37,99,235,0.4)]' : 'text-slate-600 hover:text-slate-400'}`}>
+            <button key={item.id} onClick={() => setAppView(item.id)} className={`flex flex-col items-center gap-1.5 px-7 py-3 rounded-3xl transition-all ${appView === item.id ? 'bg-blue-600 text-white shadow-[0_10px_25px_rgba(37,99,235,0.4)]' : 'text-slate-600 hover:text-slate-400'}`}>
               <item.icon size={20} />
               <span className="text-[8px] font-black uppercase tracking-widest">{item.label}</span>
             </button>
