@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
     define: {
       'process.env.API_KEY': JSON.stringify(env.API_KEY || ''),
       // Polyfill process for libraries that expect it
-      'process.cwd': '(() => "/")',
+      'process.cwd': '"/"',
       'process.env.NODE_ENV': JSON.stringify(mode)
     },
     server: {
