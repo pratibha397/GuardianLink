@@ -1,6 +1,7 @@
+
 export interface User {
   id: string;
-  phone: string;
+  email: string;
   name: string;
 }
 
@@ -16,7 +17,7 @@ export interface GuardianCoords {
 export interface ChatMessage {
   id: string;
   senderName: string;
-  senderPhone: string;
+  senderEmail: string;
   text: string;
   timestamp: number;
 }
@@ -24,7 +25,7 @@ export interface ChatMessage {
 export interface EmergencyContact {
   id: string;
   name: string;
-  phone: string;
+  email: string;
   isRegisteredUser: boolean;
 }
 
@@ -49,7 +50,7 @@ export enum AppView {
 
 export interface AlertLog {
   id: string;
-  senderPhone: string;
+  senderEmail: string;
   senderName: string;
   timestamp: number;
   location: GuardianCoords | null;
