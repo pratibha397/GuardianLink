@@ -46,16 +46,27 @@ export class GeminiVoiceMonitor {
   private inputAudioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
+  private isActive: boolean = false;
 
   constructor(private options: LiveSessionOptions) {}
 
   async start() {
     try {
+      this.isActive = true;
       const apiKey = process.env.API_KEY;
       if (!apiKey) throw new Error('API Key missing.');
 
       const ai = new GoogleGenAI({ apiKey });
       this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      
+      // Monitor context state (important for background resume)
+      this.inputAudioContext.onstatechange = () => {
+        if (this.isActive && this.inputAudioContext?.state === 'suspended') {
+          console.log('Audio Context suspended. Resuming...');
+          this.inputAudioContext?.resume();
+        }
+      };
+
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       this.sessionPromise = ai.live.connect({
@@ -84,9 +95,11 @@ export class GeminiVoiceMonitor {
           },
           onerror: (e: any) => {
             console.error('Monitor Error:', e);
-            this.options.onError('Guardian AI connection lost.');
+            if (this.isActive) this.options.onError('Guardian AI connection lost.');
           },
-          onclose: () => {}
+          onclose: () => {
+            console.log('Monitor session closed.');
+          }
         },
         config: {
           responseModalities: [Modality.AUDIO],
@@ -107,6 +120,11 @@ export class GeminiVoiceMonitor {
     const source = this.inputAudioContext.createMediaStreamSource(this.stream);
     this.scriptProcessor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
     this.scriptProcessor.onaudioprocess = (event) => {
+      // Auto-resume context if suspended by browser
+      if (this.inputAudioContext?.state === 'suspended') {
+        this.inputAudioContext.resume();
+      }
+
       const inputData = event.inputBuffer.getChannelData(0);
       const l = inputData.length;
       const int16 = new Int16Array(l);
@@ -124,6 +142,7 @@ export class GeminiVoiceMonitor {
   }
 
   async stop() {
+    this.isActive = false;
     if (this.scriptProcessor) this.scriptProcessor.disconnect();
     if (this.stream) this.stream.getTracks().forEach(track => track.stop());
     if (this.inputAudioContext && this.inputAudioContext.state !== 'closed') await this.inputAudioContext.close();
