@@ -15,14 +15,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
   const [isSearching, setIsSearching] = useState(false);
   const [lookupResult, setLookupResult] = useState<'found' | 'not_found' | null>(null);
 
-  // Check registration status when phone number changes
+  const normalizePhone = (p: string) => p.replace(/\D/g, '').slice(-10);
+
   useEffect(() => {
-    if (newContact.phone.length >= 8) {
+    const cleanPhone = normalizePhone(newContact.phone);
+    if (cleanPhone.length >= 10) {
       setIsSearching(true);
       const timer = setTimeout(() => {
         const registry = JSON.parse(localStorage.getItem(GLOBAL_REGISTRY_KEY) || '[]');
-        // Check if any registered user has this phone number (ignoring + prefix)
-        const found = registry.some((u: any) => u.phone.includes(newContact.phone) || newContact.phone.includes(u.phone));
+        const found = registry.some((u: any) => normalizePhone(u.phone) === cleanPhone);
         setLookupResult(found ? 'found' : 'not_found');
         setIsSearching(false);
       }, 500);
@@ -58,14 +59,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       <section>
         <div className="flex items-center gap-2 mb-4">
           <Mic size={18} className="text-blue-500" />
-          <h3 className="font-bold text-sm uppercase tracking-widest text-slate-400">Trigger Config</h3>
+          <h3 className="font-bold text-sm uppercase tracking-widest text-slate-400">Voice Trigger</h3>
         </div>
-        <input 
-          type="text" 
-          value={settings.triggerPhrase}
-          onChange={(e) => updateSettings({ triggerPhrase: e.target.value })}
-          className="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-        />
+        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+           <p className="text-[10px] text-slate-500 font-bold uppercase mb-2">Emergency Phrase</p>
+           <input 
+            type="text" 
+            value={settings.triggerPhrase}
+            onChange={(e) => updateSettings({ triggerPhrase: e.target.value })}
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+          />
+        </div>
       </section>
 
       <section className="space-y-6">
@@ -75,15 +79,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
         </div>
 
         <div className="bg-blue-600/5 p-6 rounded-[2.5rem] border border-blue-500/20 space-y-4">
-          <h4 className="text-[10px] font-black uppercase text-blue-400">Add New Connection</h4>
+          <h4 className="text-[10px] font-black uppercase text-blue-400 tracking-tighter">Add Verified Contact</h4>
           <input 
-            type="text" placeholder="Guardian Name" value={newContact.name}
+            type="text" placeholder="Contact Name" value={newContact.name}
             onChange={(e) => setNewContact(p => ({...p, name: e.target.value}))}
             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm"
           />
           <div className="relative">
             <input 
-              type="tel" placeholder="Phone Number" value={newContact.phone}
+              type="tel" placeholder="Phone Number (with Country Code)" value={newContact.phone}
               onChange={(e) => setNewContact(p => ({...p, phone: e.target.value}))}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm pr-10"
             />
@@ -95,27 +99,27 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           </div>
           
           {lookupResult === 'not_found' && (
-            <p className="text-[9px] text-red-400 font-bold uppercase tracking-tight">
-              Notice: This number is NOT registered on Guardian Link. They cannot receive live alerts.
+            <p className="text-[9px] text-red-400 font-bold uppercase tracking-tight leading-none bg-red-500/10 p-2 rounded-lg">
+              Alert: This user is not registered. They cannot receive internal live links.
             </p>
           )}
           {lookupResult === 'found' && (
-            <p className="text-[9px] text-green-400 font-bold uppercase tracking-tight">
-              Verified: This user is part of the Guardian Network.
+            <p className="text-[9px] text-green-400 font-bold uppercase tracking-tight leading-none bg-green-500/10 p-2 rounded-lg">
+              Success: User verified on Guardian Link network.
             </p>
           )}
 
           <button 
-            onClick={addContact} disabled={!newContact.name || !newContact.phone}
-            className="w-full bg-blue-600 py-3 rounded-xl text-white font-black uppercase text-[10px] tracking-widest disabled:opacity-50"
+            onClick={addContact} disabled={!newContact.name || !newContact.phone || lookupResult !== 'found'}
+            className="w-full bg-blue-600 py-3 rounded-xl text-white font-black uppercase text-[10px] tracking-widest disabled:opacity-30 disabled:grayscale transition-all"
           >
-            Authorize Guardian
+            Link Guardian
           </button>
         </div>
 
         <div className="space-y-3">
           {settings.contacts.map(c => (
-            <div key={c.id} className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
+            <div key={c.id} className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex items-center justify-between group">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black ${c.isRegisteredUser ? 'bg-blue-600' : 'bg-slate-800'}`}>
                   {c.name[0]}
@@ -127,7 +131,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
                   <p className="text-[10px] text-slate-500 font-bold">{c.phone}</p>
                 </div>
               </div>
-              <button onClick={() => removeContact(c.id)} className="text-slate-600 hover:text-red-500 transition-colors">
+              <button onClick={() => removeContact(c.id)} className="text-slate-700 hover:text-red-500 transition-colors p-2">
                 <Trash2 size={18} />
               </button>
             </div>
