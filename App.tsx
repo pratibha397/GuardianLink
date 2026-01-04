@@ -7,7 +7,8 @@ import Dashboard from './components/Dashboard';
 import SettingsPanel from './components/SettingsPanel';
 import { AppSettings, AppView, User } from './types';
 
-const SETTINGS_KEY = 'guardian_link_settings_persist';
+const SETTINGS_KEY = 'guardian_link_settings_v3';
+const ACTIVE_ALERT_KEY = 'guardian_active_alert_id_v3';
 
 const DEFAULT_SETTINGS: AppSettings = {
   triggerPhrase: 'Guardian, help me',
@@ -31,25 +32,46 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const saved = localStorage.getItem(SETTINGS_KEY);
-      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
-    } catch {
-      return DEFAULT_SETTINGS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Ensure we don't lose contacts on load
+        return { 
+          ...DEFAULT_SETTINGS, 
+          ...parsed, 
+          contacts: Array.isArray(parsed.contacts) ? parsed.contacts : [] 
+        };
+      }
+    } catch (e) {
+      console.error("Load settings failed", e);
     }
+    return DEFAULT_SETTINGS;
   });
 
-  const [isEmergency, setIsEmergency] = useState(false);
+  const [activeAlertId, setActiveAlertId] = useState<string | null>(() => {
+    return localStorage.getItem(ACTIVE_ALERT_KEY);
+  });
 
-  // Robust persistence effect
+  const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
+
+  // Sync settings to localStorage whenever they change
   useEffect(() => {
-    if (settings) {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    }
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  const isConfigured = !!(process.env.API_KEY);
+  // Sync alert state to localStorage
+  useEffect(() => {
+    if (activeAlertId) {
+      localStorage.setItem(ACTIVE_ALERT_KEY, activeAlertId);
+      setIsEmergency(true);
+    } else {
+      localStorage.removeItem(ACTIVE_ALERT_KEY);
+      setIsEmergency(false);
+    }
+  }, [activeAlertId]);
 
   const handleLogout = () => {
     localStorage.removeItem('guardian_user');
+    localStorage.removeItem(ACTIVE_ALERT_KEY);
     setUser(null);
   };
 
@@ -59,15 +81,15 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col max-w-md mx-auto bg-[#020617] relative text-slate-100 font-sans shadow-2xl">
-      <header className="p-6 bg-[#020617]/80 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center border-b border-white/5">
+      <header className="p-6 bg-[#020617]/90 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center border-b border-white/5">
         <div className="flex items-center gap-3">
-          <div className={`p-2 rounded-xl ${isEmergency ? 'bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.5)]' : 'bg-blue-600'}`}>
+          <div className={`p-2 rounded-xl transition-all duration-500 ${isEmergency ? 'bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.6)]' : 'bg-blue-600'}`}>
             <Shield size={20} className="text-white" />
           </div>
           <div>
             <h1 className="font-extrabold text-lg tracking-tight leading-none uppercase text-white">GuardianLink</h1>
-            <p className="text-[8px] mono text-slate-500 uppercase font-bold tracking-[0.3em] mt-1">
-              {isConfigured ? 'Secure Node' : 'System Standby'}
+            <p className={`text-[8px] mono uppercase font-bold tracking-[0.3em] mt-1 ${isEmergency ? 'text-red-500 animate-pulse' : 'text-slate-500'}`}>
+              {isEmergency ? 'CRITICAL ALERT ACTIVE' : 'Aegis Protection'}
             </p>
           </div>
         </div>
@@ -83,7 +105,9 @@ const App: React.FC = () => {
             settings={settings} 
             updateSettings={(s) => setSettings(p => ({...p, ...s}))}
             isEmergency={isEmergency}
-            onAlert={() => setIsEmergency(true)}
+            onAlert={(log) => setActiveAlertId(log.id)}
+            externalActiveAlertId={activeAlertId}
+            onClearAlert={() => setActiveAlertId(null)}
           />
         )}
         {appView === AppView.MESH && <AlertHistory user={user} logs={[]} clearLogs={() => {}} />}
@@ -93,7 +117,7 @@ const App: React.FC = () => {
       </main>
 
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] via-[#020617] to-transparent z-50">
-        <div className="flex justify-around items-center glass p-2 rounded-[2rem] border border-white/10 shadow-2xl">
+        <div className="flex justify-around items-center glass p-2 rounded-[2.5rem] border border-white/10 shadow-2xl">
           {[
             { id: AppView.DASHBOARD, icon: Home, label: 'Safety' },
             { id: AppView.MESH, icon: Radio, label: 'Network' },
