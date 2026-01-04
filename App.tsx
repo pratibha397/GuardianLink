@@ -1,5 +1,5 @@
 
-import { AlertTriangle, Home, LogOut, Radio, Settings, Shield } from 'lucide-react';
+import { Home, LogOut, Radio, Settings, Shield } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import AlertHistory from './components/AlertHistory';
 import AuthScreen from './components/AuthScreen';
@@ -7,7 +7,7 @@ import Dashboard from './components/Dashboard';
 import SettingsPanel from './components/SettingsPanel';
 import { AppSettings, AppView, User } from './types';
 
-const SETTINGS_KEY = 'guardian_settings_v1';
+const SETTINGS_KEY = 'guardian_link_settings_persist';
 
 const DEFAULT_SETTINGS: AppSettings = {
   triggerPhrase: 'Guardian, help me',
@@ -31,7 +31,7 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const saved = localStorage.getItem(SETTINGS_KEY);
-      return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
     } catch {
       return DEFAULT_SETTINGS;
     }
@@ -39,8 +39,11 @@ const App: React.FC = () => {
 
   const [isEmergency, setIsEmergency] = useState(false);
 
+  // Robust persistence effect
   useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    if (settings) {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    }
   }, [settings]);
 
   const isConfigured = !!(process.env.API_KEY);
@@ -64,7 +67,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="font-extrabold text-lg tracking-tight leading-none uppercase text-white">GuardianLink</h1>
             <p className="text-[8px] mono text-slate-500 uppercase font-bold tracking-[0.3em] mt-1">
-              {isConfigured ? 'Link Established' : 'System Offline'}
+              {isConfigured ? 'Secure Node' : 'System Standby'}
             </p>
           </div>
         </div>
@@ -72,15 +75,6 @@ const App: React.FC = () => {
           <LogOut size={18} />
         </button>
       </header>
-
-      {!isConfigured && (
-        <div className="mx-6 mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3">
-          <AlertTriangle size={14} className="text-amber-500 shrink-0" />
-          <p className="text-[9px] font-bold uppercase text-amber-500 tracking-wider">
-            Critical configuration missing. Please check API settings.
-          </p>
-        </div>
-      )}
 
       <main className="flex-1 overflow-y-auto p-6 pb-28">
         {appView === AppView.DASHBOARD && (
