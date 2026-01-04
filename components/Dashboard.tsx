@@ -46,7 +46,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
   const chatEndRef = useRef<HTMLDivElement>(null);
   const wakeLockRef = useRef<any>(null);
 
-  // Wake Lock handler
+  // TASK 3: Wake Lock to keep GPS alive
   useEffect(() => {
     const handleWakeLock = async () => {
       if (activeAlertId && 'wakeLock' in navigator) {
@@ -66,6 +66,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     return () => { if (wakeLockRef.current) wakeLockRef.current.release(); };
   }, [activeAlertId]);
 
+  // Handle SOS Timer
   useEffect(() => {
     if (timerActive && timeLeft > 0) {
       timerRef.current = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
@@ -75,7 +76,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     return () => clearTimeout(timerRef.current);
   }, [timerActive, timeLeft]);
 
-  // Sync active alert chat
+  // Sync active alert chat stream
   useEffect(() => {
     if (activeAlertId) {
       const chatRef = ref(rtdb, `alerts/${activeAlertId}/updates`);
@@ -91,6 +92,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     }
   }, [activeAlertId]);
 
+  // GPS Watcher
   useEffect(() => {
     if (settings.isListening || activeAlertId) {
       setErrorMsg(null);
@@ -113,6 +115,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     return () => stopLocationWatch(watchIdRef.current);
   }, [settings.isListening, activeAlertId]);
 
+  // TASK 1: Post special location card to chat
   const postLocationToChat = async (alertId: string, currentCoords: GuardianCoords | null) => {
     if (!currentCoords) return;
     const msg: ChatMessage = {
@@ -120,7 +123,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       type: 'location',
       senderName: 'System',
       senderEmail: 'system@guardianlink.io',
-      text: '📍 Emergency location shared.',
+      text: '📍 Live location shared automatically.',
       lat: currentCoords.lat,
       lng: currentCoords.lng,
       timestamp: Date.now()
@@ -129,7 +132,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       const updatesRef = ref(rtdb, `alerts/${alertId}/updates`);
       await push(updatesRef, msg);
     } catch (e) {
-      console.error("Location post failed", e);
+      console.error("SOS location post failed", e);
     }
   };
 
@@ -150,6 +153,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
         .map((result: any) => result[0].transcript)
         .join('').toLowerCase();
       
+      // TASK 1.3: Danger Phrase detection
       if (transcript.includes(settings.triggerPhrase.toLowerCase())) {
         triggerSOS("Help me");
       }
@@ -201,8 +205,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       setActiveAlertId(alertId);
       onAlert(log);
       setTimerActive(false);
-      // Auto-post initial location
-      if (coords) postLocationToChat(alertId, coords);
+      
+      // TASK 1.2: Post location immediately after initializing alert
+      if (coords) {
+        postLocationToChat(alertId, coords);
+      } else {
+        // Retry once after 2 seconds if GPS wasn't locked yet
+        setTimeout(() => {
+          if (coords) postLocationToChat(alertId, coords);
+        }, 2000);
+      }
     } catch (e) {
       setErrorMsg("SOS broadcast failed. Checking connection...");
     }
@@ -248,9 +260,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     setErrorMsg(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
+      await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Locate 3 emergency services (hospitals, police) near lat ${coords.lat}, lng ${coords.lng}. Return as a concise list.`,
+        contents: `Locate 3 nearest emergency hospitals and police stations for lat ${coords.lat}, lng ${coords.lng}.`,
       });
       
       setSafeSpots([
@@ -265,20 +277,21 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     }
   };
 
+  // TASK 1.4: Emergency UI with Comms Hub
   if (activeAlertId) {
     return (
-      <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500">
-        <div className="bg-red-600 p-8 rounded-[2.5rem] shadow-[0_30px_60px_rgba(220,38,38,0.3)] text-center relative overflow-hidden">
+      <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500 max-h-[85vh] flex flex-col">
+        <div className="bg-red-600 p-8 rounded-[2.5rem] shadow-[0_30px_60px_rgba(220,38,38,0.3)] text-center relative overflow-hidden shrink-0">
           <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white/10 to-transparent animate-pulse" />
           <ShieldAlert size={60} className="text-white mx-auto mb-4 relative z-10" />
-          <h2 className="text-3xl font-black uppercase tracking-tighter text-white relative z-10 italic">SOS BROADCASTING</h2>
-          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-red-100/80 mt-2 relative z-10">Guardians have been notified</p>
+          <h2 className="text-3xl font-black uppercase tracking-tighter text-white relative z-10 italic">SOS ACTIVE</h2>
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-red-100/80 mt-2 relative z-10">Live Link Established</p>
         </div>
 
-        <div className="glass rounded-[2rem] p-6 border-red-500/20 flex flex-col h-[450px]">
-          <div className="flex items-center gap-3 mb-4 border-b border-white/5 pb-4">
+        <div className="glass rounded-[2rem] p-6 border-red-500/20 flex flex-col flex-1 min-h-0">
+          <div className="flex items-center gap-3 mb-4 border-b border-white/5 pb-4 shrink-0">
             <MessageCircle size={18} className="text-blue-500" />
-            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Guardian Comms</h3>
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 italic">Network Comms</h3>
           </div>
           
           <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2 custom-scrollbar">
@@ -289,27 +302,32 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
               </div>
             ) : (
               chatMessages.map((msg, idx) => {
-                const isSystem = msg.senderEmail.includes('system');
                 const isMe = msg.senderEmail === user.email;
 
+                // TASK 1.4: Render Location Card
                 if (msg.type === 'location') {
                   return (
-                    <div key={idx} className="flex justify-center my-4">
-                      <div className="bg-blue-900/40 border border-blue-500/30 p-4 rounded-3xl w-full max-w-[280px] shadow-xl">
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="bg-blue-500 p-2 rounded-xl text-white">
-                            <Navigation size={16} />
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">Location Share</span>
+                    <div key={idx} className="flex justify-center my-6">
+                      <div className="bg-blue-900/40 border border-blue-400/30 p-5 rounded-[2.5rem] w-full max-w-[300px] shadow-2xl relative">
+                        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-[8px] font-black uppercase px-3 py-1 rounded-full shadow-lg">
+                          Live Location Shared
                         </div>
-                        <p className="text-white text-[11px] font-bold mb-3">Target coordinates localized. Tap to track.</p>
+                        <div className="flex items-center gap-4 mb-4 mt-2">
+                          <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-xl">
+                            <Navigation size={20} />
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-blue-300">GPS Payload</span>
+                            <p className="text-white text-[12px] font-bold">Safe-Zone Coordinates</p>
+                          </div>
+                        </div>
                         <a 
                           href={`https://www.google.com/maps?q=${msg.lat},${msg.lng}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center justify-center gap-2 bg-blue-600 py-3 rounded-xl text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-600/30 active:scale-95 transition-all"
+                          className="flex items-center justify-center gap-3 bg-white py-4 rounded-2xl text-blue-900 text-[10px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all"
                         >
-                          Open in Maps <ExternalLink size={12} />
+                          Open in Maps <ExternalLink size={14} />
                         </a>
                       </div>
                     </div>
@@ -318,7 +336,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
                 return (
                   <div key={idx} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                    <div className={`max-w-[85%] p-4 rounded-2xl text-xs font-bold leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-tr-none shadow-lg shadow-blue-600/20' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-white/5'}`}>
+                    <div className={`max-w-[85%] p-4 rounded-2xl text-[13px] font-bold leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-tr-none shadow-lg shadow-blue-600/20' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-white/5'}`}>
                       <p className="text-[8px] uppercase tracking-tighter opacity-50 mb-1">{msg.senderName}</p>
                       {msg.text}
                     </div>
@@ -329,25 +347,25 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
             <div ref={chatEndRef} />
           </div>
 
-          <form onSubmit={sendChatMessage} className="flex gap-2">
+          <form onSubmit={sendChatMessage} className="flex gap-2 shrink-0">
             <input 
               type="text" 
               value={replyText} 
               onChange={(e) => setReplyText(e.target.value)}
-              placeholder="Message guardians..."
-              className="flex-1 bg-slate-950 border border-white/5 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
+              placeholder="Send status update..."
+              className="flex-1 bg-slate-950 border border-white/5 rounded-2xl px-5 py-4 text-sm text-white focus:border-blue-500 outline-none shadow-inner"
             />
-            <button type="submit" className="bg-blue-600 p-3 rounded-xl text-white shadow-lg shadow-blue-600/20 active:scale-95 transition-all">
-              <Send size={18} />
+            <button type="submit" className="bg-blue-600 p-4 rounded-2xl text-white shadow-lg shadow-blue-600/20 active:scale-95 transition-all">
+              <Send size={20} />
             </button>
           </form>
         </div>
 
         <button 
           onClick={cancelSOS}
-          className="w-full bg-slate-900 border border-white/5 py-4 rounded-2xl text-slate-400 font-bold uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
+          className="w-full bg-slate-900 border border-white/5 py-5 rounded-2xl text-slate-400 font-bold uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 shrink-0"
         >
-          <X size={14} /> I am safe now
+          <X size={14} /> System Reset • I am safe
         </button>
       </div>
     );
@@ -414,7 +432,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
           </div>
           <div>
             <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest">Emergency</p>
-            <div className="text-xl font-black tracking-tight text-white uppercase italic">Send SOS</div>
+            <div className="text-xl font-black tracking-tight text-white uppercase italic leading-none mt-1">Send SOS</div>
           </div>
         </div>
       </div>
