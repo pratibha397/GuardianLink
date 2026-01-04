@@ -1,5 +1,5 @@
 
-import { AlertCircle, CheckCircle2, List, Mic, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, List, Mic, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { collection, db, getDocs, query, where } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
@@ -83,7 +83,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       <section className="space-y-6">
         <div className="flex items-center gap-3 px-2">
           <div className="p-2 bg-sky-500/10 rounded-xl text-sky-500"><List size={18} /></div>
-          <h3 className="font-black text-[11px] uppercase tracking-[0.3em] text-slate-500 italic">Guardian Node</h3>
+          <h3 className="font-black text-[11px] uppercase tracking-[0.3em] text-slate-500 italic">Guardian Nodes</h3>
         </div>
 
         <div className="bg-slate-950 p-8 rounded-[3rem] border border-white/5 shadow-2xl space-y-6">
@@ -95,7 +95,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             />
             <div className="relative">
               <input 
-                type="email" placeholder="Mesh Email ID" value={newContact.email}
+                type="email" placeholder="Guardian Email" value={newContact.email}
                 onChange={(e) => setNewContact(p => ({...p, email: e.target.value}))}
                 className="w-full bg-slate-900 border border-white/5 rounded-2xl py-4 px-6 text-sm text-white font-bold pr-14 outline-none"
               />
@@ -108,7 +108,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             
             <button 
               onClick={addContact} disabled={!newContact.name || !newContact.email}
-              className="w-full bg-sky-500 py-4 rounded-2xl text-white font-black uppercase text-[10px] tracking-widest disabled:opacity-20 shadow-xl"
+              className="w-full bg-sky-500 py-4 rounded-2xl text-white font-black uppercase text-[10px] tracking-widest disabled:opacity-20 shadow-xl active:scale-95 transition-transform"
             >
               Add Node
             </button>
@@ -121,7 +121,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center font-black text-slate-400">{c.name[0]}</div>
                 <div>
-                  <h5 className="text-sm font-black text-white italic">{c.name}</h5>
+                  <div className="flex items-center gap-2">
+                    <h5 className="text-sm font-black text-white italic">{c.name}</h5>
+                    {c.isRegisteredUser ? (
+                      <span className="bg-green-500/20 text-green-500 text-[7px] font-black uppercase px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                        <ShieldCheck size={8} /> Verified
+                      </span>
+                    ) : (
+                      <span className="bg-amber-500/20 text-amber-500 text-[7px] font-black uppercase px-1.5 py-0.5 rounded-md">
+                        SMS Only
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[9px] text-slate-600 font-bold uppercase tracking-widest">{c.email}</p>
                 </div>
               </div>

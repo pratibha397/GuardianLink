@@ -20,6 +20,9 @@ export interface ChatMessage {
   senderEmail: string;
   text: string;
   timestamp: number;
+  type?: 'text' | 'location';
+  lat?: number;
+  lng?: number;
 }
 
 export interface EmergencyContact {

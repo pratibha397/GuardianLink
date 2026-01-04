@@ -4,9 +4,11 @@ import {
   Activity,
   AlertCircle,
   ChevronRight,
+  ExternalLink,
   Globe,
   MapPin,
   MessageCircle,
+  Navigation,
   Power,
   Search,
   Send,
@@ -42,6 +44,27 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
   const timerRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const wakeLockRef = useRef<any>(null);
+
+  // Wake Lock handler
+  useEffect(() => {
+    const handleWakeLock = async () => {
+      if (activeAlertId && 'wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        } catch (err) {
+          console.warn("Wake Lock failed:", err);
+        }
+      } else {
+        if (wakeLockRef.current) {
+          wakeLockRef.current.release();
+          wakeLockRef.current = null;
+        }
+      }
+    };
+    handleWakeLock();
+    return () => { if (wakeLockRef.current) wakeLockRef.current.release(); };
+  }, [activeAlertId]);
 
   useEffect(() => {
     if (timerActive && timeLeft > 0) {
@@ -59,7 +82,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       const unsubscribe = onValue(chatRef, (snapshot: DataSnapshot) => {
         const data = snapshot.val();
         if (data) {
-          setChatMessages(Object.values(data) as ChatMessage[]);
+          const sorted = Object.values(data).sort((a: any, b: any) => a.timestamp - b.timestamp) as ChatMessage[];
+          setChatMessages(sorted);
           setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
         }
       });
@@ -68,13 +92,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
   }, [activeAlertId]);
 
   useEffect(() => {
-    if (settings.isListening || isEmergency) {
+    if (settings.isListening || activeAlertId) {
       setErrorMsg(null);
       watchIdRef.current = startLocationWatch(
         (c: GuardianCoords) => {
           setCoords(c);
           setErrorMsg(null);
-          // If in emergency, keep the database updated with latest location
           if (activeAlertId) {
             set(ref(rtdb, `alerts/${activeAlertId}/location`), c).catch(() => {});
           }
@@ -88,7 +111,27 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       }
     }
     return () => stopLocationWatch(watchIdRef.current);
-  }, [settings.isListening, isEmergency, activeAlertId]);
+  }, [settings.isListening, activeAlertId]);
+
+  const postLocationToChat = async (alertId: string, currentCoords: GuardianCoords | null) => {
+    if (!currentCoords) return;
+    const msg: ChatMessage = {
+      id: `loc_${Date.now()}`,
+      type: 'location',
+      senderName: 'System',
+      senderEmail: 'system@guardianlink.io',
+      text: '📍 Emergency location shared.',
+      lat: currentCoords.lat,
+      lng: currentCoords.lng,
+      timestamp: Date.now()
+    };
+    try {
+      const updatesRef = ref(rtdb, `alerts/${alertId}/updates`);
+      await push(updatesRef, msg);
+    } catch (e) {
+      console.error("Location post failed", e);
+    }
+  };
 
   const startListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -139,7 +182,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
   };
 
   const triggerSOS = async (reason: string) => {
-    // If an alert is already active, don't create a new one, just update message
     if (activeAlertId) return;
 
     const alertId = `alert_${user.id}_${Date.now()}`;
@@ -159,6 +201,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       setActiveAlertId(alertId);
       onAlert(log);
       setTimerActive(false);
+      // Auto-post initial location
+      if (coords) postLocationToChat(alertId, coords);
     } catch (e) {
       setErrorMsg("SOS broadcast failed. Checking connection...");
     }
@@ -170,6 +214,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
     const msg: ChatMessage = {
       id: Date.now().toString(),
+      type: 'text',
       senderName: user.name,
       senderEmail: user.email,
       text: replyText.trim(),
@@ -178,7 +223,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
 
     try {
       const updatesRef = ref(rtdb, `alerts/${activeAlertId}/updates`);
-      await set(push(updatesRef), msg);
+      await push(updatesRef, msg);
       setReplyText("");
     } catch (e) {
       setErrorMsg("Message delivery failed.");
@@ -190,7 +235,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
       await set(ref(rtdb, `alerts/${activeAlertId}/isLive`), false);
       setActiveAlertId(null);
       setChatMessages([]);
-      window.location.reload(); // Hard reset for safety
+      window.location.reload(); 
     }
   };
 
@@ -203,9 +248,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
     setErrorMsg(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      await ai.models.generateContent({
+      const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Locate 3 emergency services (hospitals, police) near lat ${coords.lat}, lng ${coords.lng}.`,
+        contents: `Locate 3 emergency services (hospitals, police) near lat ${coords.lat}, lng ${coords.lng}. Return as a concise list.`,
       });
       
       setSafeSpots([
@@ -230,7 +275,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
           <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-red-100/80 mt-2 relative z-10">Guardians have been notified</p>
         </div>
 
-        <div className="glass rounded-[2rem] p-6 border-red-500/20 flex flex-col h-[400px]">
+        <div className="glass rounded-[2rem] p-6 border-red-500/20 flex flex-col h-[450px]">
           <div className="flex items-center gap-3 mb-4 border-b border-white/5 pb-4">
             <MessageCircle size={18} className="text-blue-500" />
             <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Guardian Comms</h3>
@@ -243,14 +288,43 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
                 <p className="text-[10px] uppercase font-bold tracking-widest italic">Encrypted channel established. Waiting for response...</p>
               </div>
             ) : (
-              chatMessages.map((msg, idx) => (
-                <div key={idx} className={`flex flex-col ${msg.senderEmail === user.email ? 'items-end' : 'items-start'}`}>
-                  <div className={`max-w-[85%] p-4 rounded-2xl text-xs font-bold leading-relaxed ${msg.senderEmail === user.email ? 'bg-blue-600 text-white rounded-tr-none shadow-lg shadow-blue-600/20' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-white/5'}`}>
-                    <p className="text-[8px] uppercase tracking-tighter opacity-50 mb-1">{msg.senderName}</p>
-                    {msg.text}
+              chatMessages.map((msg, idx) => {
+                const isSystem = msg.senderEmail.includes('system');
+                const isMe = msg.senderEmail === user.email;
+
+                if (msg.type === 'location') {
+                  return (
+                    <div key={idx} className="flex justify-center my-4">
+                      <div className="bg-blue-900/40 border border-blue-500/30 p-4 rounded-3xl w-full max-w-[280px] shadow-xl">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="bg-blue-500 p-2 rounded-xl text-white">
+                            <Navigation size={16} />
+                          </div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">Location Share</span>
+                        </div>
+                        <p className="text-white text-[11px] font-bold mb-3">Target coordinates localized. Tap to track.</p>
+                        <a 
+                          href={`https://www.google.com/maps?q=${msg.lat},${msg.lng}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-2 bg-blue-600 py-3 rounded-xl text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-600/30 active:scale-95 transition-all"
+                        >
+                          Open in Maps <ExternalLink size={12} />
+                        </a>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={idx} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                    <div className={`max-w-[85%] p-4 rounded-2xl text-xs font-bold leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-tr-none shadow-lg shadow-blue-600/20' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-white/5'}`}>
+                      <p className="text-[8px] uppercase tracking-tighter opacity-50 mb-1">{msg.senderName}</p>
+                      {msg.text}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
             <div ref={chatEndRef} />
           </div>
@@ -298,7 +372,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
         </div>
         
         <div className="mt-8 text-center space-y-2">
-          <h2 className="text-2xl font-black tracking-tight uppercase flex items-center gap-2 justify-center leading-none">
+          <h2 className="text-2xl font-black tracking-tight uppercase flex items-center gap-2 justify-center leading-none text-white">
             {settings.isListening ? <Activity className="text-blue-500 animate-pulse" size={20} /> : null}
             {settings.isListening ? 'Protection Active' : 'System Standby'}
           </h2>
@@ -329,7 +403,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
             </div>
           </div>
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Safe Timer</p>
-          <div className="text-xl font-bold mono mt-1">
+          <div className="text-xl font-bold mono mt-1 text-white">
             {timerActive ? `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}` : 'Check-In'}
           </div>
         </div>
@@ -351,7 +425,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
             <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
               <Globe size={18} />
             </div>
-            <h3 className="text-sm font-extrabold uppercase tracking-widest italic">Nearby Help</h3>
+            <h3 className="text-sm font-extrabold uppercase tracking-widest italic text-white">Nearby Help</h3>
           </div>
           <button 
             onClick={findSafeSpots}
@@ -391,7 +465,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, settings, updateSettings, i
             {coords ? 'LIVE GPS LOCK' : (settings.isListening ? 'SEARCHING SIGNAL' : 'OFFLINE')}
           </span>
         </div>
-        <span className="font-bold">{coords ? `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}` : '--.----, --.----'}</span>
+        <span className="font-bold text-white">{coords ? `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}` : '--.----, --.----'}</span>
       </div>
     </div>
   );

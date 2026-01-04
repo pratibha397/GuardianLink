@@ -1,11 +1,13 @@
 
 import { AlertTriangle, Home, LogOut, Radio, Settings, Shield } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import AlertHistory from './components/AlertHistory';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import SettingsPanel from './components/SettingsPanel';
 import { AppSettings, AppView, User } from './types';
+
+const SETTINGS_KEY = 'guardian_settings_v1';
 
 const DEFAULT_SETTINGS: AppSettings = {
   triggerPhrase: 'Guardian, help me',
@@ -25,11 +27,22 @@ const App: React.FC = () => {
   });
   
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    try {
+      const saved = localStorage.getItem(SETTINGS_KEY);
+      return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
+  });
+
   const [isEmergency, setIsEmergency] = useState(false);
 
-  // We only strictly require the primary API_KEY for the app to be considered "ready"
-  // Specific backend services (Firebase) will handle their own missing config gracefully.
+  useEffect(() => {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }, [settings]);
+
   const isConfigured = !!(process.env.API_KEY);
 
   const handleLogout = () => {
@@ -49,7 +62,7 @@ const App: React.FC = () => {
             <Shield size={20} className="text-white" />
           </div>
           <div>
-            <h1 className="font-extrabold text-lg tracking-tight leading-none uppercase">GuardianLink</h1>
+            <h1 className="font-extrabold text-lg tracking-tight leading-none uppercase text-white">GuardianLink</h1>
             <p className="text-[8px] mono text-slate-500 uppercase font-bold tracking-[0.3em] mt-1">
               {isConfigured ? 'Link Established' : 'System Offline'}
             </p>
