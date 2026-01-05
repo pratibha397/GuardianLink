@@ -5,7 +5,7 @@ import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
-import { db, doc, getDoc, setDoc } from './services/firebase';
+import { auth, db, doc, getDoc, setDoc } from './services/firebase';
 import { AppSettings, AppView, User } from './types';
 
 const SETTINGS_KEY = 'guardian_link_settings_v3';
@@ -44,22 +44,31 @@ const App: React.FC = () => {
 
     const fetchSettings = async () => {
       try {
-        // First try local storage for immediate UI
+        // 1. Initial local state (fast)
         const local = localStorage.getItem(SETTINGS_KEY);
         if (local) {
-          setSettings(JSON.parse(local));
+          try {
+            setSettings(JSON.parse(local));
+          } catch (e) {
+            console.error("Local settings corrupt", e);
+          }
         }
 
-        // Then sync from Cloud
-        const docRef = doc(db, "settings", user.email.toLowerCase());
+        // 2. Sync from Cloud (source of truth)
+        const userEmail = user.email.toLowerCase();
+        const docRef = doc(db, "settings", userEmail);
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
           const cloudSettings = docSnap.data() as AppSettings;
+          // Ensure contacts is always an array
+          if (!Array.isArray(cloudSettings.contacts)) {
+            cloudSettings.contacts = [];
+          }
           setSettings(cloudSettings);
           localStorage.setItem(SETTINGS_KEY, JSON.stringify(cloudSettings));
         } else {
-          // If no cloud settings, initialize them with current/default
+          // If no cloud settings exist, create them for the first time
           await setDoc(docRef, settings);
         }
       } catch (e) {
@@ -68,7 +77,7 @@ const App: React.FC = () => {
     };
 
     fetchSettings();
-  }, [user?.id]);
+  }, [user?.email]);
 
   // Persist settings locally and to cloud whenever they change
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
@@ -78,7 +87,8 @@ const App: React.FC = () => {
 
     if (user) {
       try {
-        await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
+        const userEmail = user.email.toLowerCase();
+        await setDoc(doc(db, "settings", userEmail), updated, { merge: true });
       } catch (e) {
         console.error("Failed to save settings to cloud", e);
       }
@@ -96,15 +106,20 @@ const App: React.FC = () => {
   }, [activeAlertId]);
 
   const handleLogout = () => {
+    auth.signOut().catch(() => {});
     localStorage.removeItem('guardian_user');
     localStorage.removeItem(ACTIVE_ALERT_KEY);
     localStorage.removeItem(SETTINGS_KEY);
     setUser(null);
     setSettings(DEFAULT_SETTINGS);
+    setAppView(AppView.DASHBOARD);
   };
 
   if (!user) {
-    return <AuthScreen onLogin={(u) => { setUser(u); localStorage.setItem('guardian_user', JSON.stringify(u)); }} />;
+    return <AuthScreen onLogin={(u) => { 
+      setUser(u); 
+      localStorage.setItem('guardian_user', JSON.stringify(u)); 
+    }} />;
   }
 
   return (
@@ -121,12 +136,12 @@ const App: React.FC = () => {
             </p>
           </div>
         </div>
-        <button onClick={handleLogout} className="p-2 text-slate-600 hover:text-red-500 transition-colors">
-          <LogOut size={18} />
+        <button onClick={handleLogout} className="p-2 text-slate-600 hover:text-red-500 transition-colors group">
+          <LogOut size={18} className="group-hover:scale-110 transition-transform" />
         </button>
       </header>
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto custom-scrollbar">
         {appView === AppView.DASHBOARD && (
           <div className="p-6 pb-28">
             <Dashboard 

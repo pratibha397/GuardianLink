@@ -1,6 +1,7 @@
 
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { FirebaseApp, getApp, getApps, initializeApp } from "firebase/app";
 import {
+  Auth,
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
@@ -8,8 +9,28 @@ import {
   signInWithEmailAndPassword,
   updateProfile
 } from "firebase/auth";
-import { DataSnapshot, getDatabase, onValue, push, ref, set, update } from "firebase/database";
-import { collection, doc, getDoc, getDocs, getFirestore, query, setDoc, updateDoc, where } from "firebase/firestore";
+import {
+  DataSnapshot,
+  Database,
+  getDatabase,
+  onValue,
+  push,
+  ref,
+  set,
+  update
+} from "firebase/database";
+import {
+  Firestore,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  getFirestore,
+  query,
+  setDoc,
+  updateDoc,
+  where
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY || "",
@@ -25,12 +46,17 @@ const firebaseConfig = {
 export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
 
 // Initialize Firebase only once
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+let app: FirebaseApp;
+if (getApps().length === 0) {
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApp();
+}
 
-// These calls register the components to the app instance and provide accessors
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const rtdb = getDatabase(app);
+// Ensure components are initialized and registered correctly
+export const auth: Auth = getAuth(app);
+export const db: Firestore = getFirestore(app);
+export const rtdb: Database = getDatabase(app);
 
 // Auth Exports
 export {

@@ -1,5 +1,5 @@
 
-import { AlertCircle, CheckCircle2, Mic, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Mic, Search, Shield, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
@@ -25,13 +25,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
     setLookupResult(null);
 
     try {
-      // Lookup the user by their email in the 'users' collection
+      // Lookup the user by their normalized email in the 'users' collection
+      // Document IDs are case-sensitive in Firestore, so we must be consistent
       const userRef = doc(db, "users", normalized);
       const userSnap = await getDoc(userRef);
       
-      setLookupResult(userSnap.exists() ? 'found' : 'not_found');
+      if (userSnap.exists()) {
+        setLookupResult('found');
+      } else {
+        setLookupResult('not_found');
+      }
     } catch (error) {
       console.warn("User lookup failed", error);
+      // In case of error (like permission denied), treat as not found for safety
       setLookupResult('not_found');
     } finally {
       setIsSearching(false);
@@ -40,25 +46,40 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (newContact.email) checkUserExists(newContact.email);
+      if (newContact.email) {
+        checkUserExists(newContact.email);
+      } else {
+        setLookupResult(null);
+      }
     }, 600);
     return () => clearTimeout(timer);
   }, [newContact.email]);
 
   const addContact = () => {
-    if (newContact.name.trim() && newContact.email.trim()) {
+    const cleanName = newContact.name.trim();
+    const cleanEmail = newContact.email.trim().toLowerCase();
+
+    if (cleanName && cleanEmail) {
       const contact: EmergencyContact = {
-        id: Date.now().toString(),
-        name: newContact.name.trim(),
-        email: newContact.email.trim().toLowerCase(),
+        id: `contact_${Date.now()}`,
+        name: cleanName,
+        email: cleanEmail,
         isRegisteredUser: lookupResult === 'found'
       };
       
       const currentContacts = Array.isArray(settings.contacts) ? settings.contacts : [];
-      const updatedContacts = [...currentContacts, contact];
       
+      // Prevent duplicates
+      if (currentContacts.some(c => c.email === cleanEmail)) {
+        setNewContact({ name: '', email: '' });
+        setLookupResult(null);
+        return;
+      }
+
+      const updatedContacts = [...currentContacts, contact];
       updateSettings({ contacts: updatedContacts });
       
+      // Reset input
       setNewContact({ name: '', email: '' });
       setLookupResult(null);
     }
@@ -83,7 +104,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             value={settings.triggerPhrase}
             onChange={(e) => updateSettings({ triggerPhrase: e.target.value })}
             className="w-full bg-slate-900/50 border border-white/5 rounded-2xl px-6 py-5 text-sm font-black text-white focus:border-blue-500 outline-none"
+            placeholder="e.g. Guardian, help me"
           />
+          <p className="text-[9px] text-slate-600 mt-4 font-bold uppercase tracking-widest">Say this to trigger the mesh SOS.</p>
         </div>
       </section>
 
@@ -113,18 +136,25 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           </div>
           
           <button 
-            onClick={addContact} disabled={!newContact.name.trim() || !newContact.email.trim()}
+            onClick={addContact} 
+            disabled={!newContact.name.trim() || !newContact.email.trim() || isSearching}
             className="w-full bg-blue-600 py-5 rounded-[2rem] text-white font-black uppercase text-[10px] tracking-widest disabled:opacity-20 shadow-xl active:scale-95 transition-all"
           >
             Authorize Mesh Node
           </button>
+          
+          {lookupResult === 'not_found' && newContact.email && !isSearching && (
+            <p className="text-[10px] text-red-400 font-bold uppercase text-center">Guardian not found in Aegis network.</p>
+          )}
         </div>
 
         <div className="space-y-4">
           {(settings.contacts || []).map(c => (
-            <div key={c.id} className="bg-slate-900/40 border border-white/5 p-6 rounded-[2.5rem] flex items-center justify-between shadow-lg">
+            <div key={c.id} className="bg-slate-900/40 border border-white/5 p-6 rounded-[2.5rem] flex items-center justify-between shadow-lg group">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center font-black text-lg text-slate-500 uppercase">{c.name[0]}</div>
+                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center font-black text-lg text-slate-500 uppercase">
+                  {c.name ? c.name[0] : '?'}
+                </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <h5 className="text-[14px] font-black text-white italic">{c.name}</h5>
@@ -141,9 +171,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
                   <p className="text-[9px] text-slate-600 font-bold uppercase tracking-widest mt-1">{c.email}</p>
                 </div>
               </div>
-              <button onClick={() => removeContact(c.id)} className="text-slate-700 hover:text-red-500 transition-colors p-3"><Trash2 size={20} /></button>
+              <button onClick={() => removeContact(c.id)} className="text-slate-700 hover:text-red-500 transition-colors p-3 group-hover:scale-110 transition-transform">
+                <Trash2 size={20} />
+              </button>
             </div>
           ))}
+          {(!settings.contacts || settings.contacts.length === 0) && (
+            <div className="text-center py-16 opacity-10">
+              <Shield size={64} className="mx-auto mb-4" />
+              <p className="text-[10px] uppercase font-bold tracking-[0.5em]">Network Isolated</p>
+            </div>
+          )}
         </div>
       </section>
     </div>
