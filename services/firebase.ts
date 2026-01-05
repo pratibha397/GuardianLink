@@ -1,5 +1,5 @@
 
-import { initializeApp } from "firebase/app";
+import { getApp, getApps, initializeApp } from "firebase/app";
 import {
   createUserWithEmailAndPassword,
   getAuth,
@@ -24,9 +24,10 @@ const firebaseConfig = {
 // Check if we have enough to actually run Firebase
 export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
 
-// Initialize Firebase only if the config looks valid, otherwise export mocks or allow standard getAuth to throw later
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase only once
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
+// These calls register the components to the app instance and provide accessors
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const rtdb = getDatabase(app);

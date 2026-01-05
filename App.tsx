@@ -1,9 +1,9 @@
 
-import { Home, LogOut, Radio, Settings, Shield } from 'lucide-react';
+import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import AlertHistory from './components/AlertHistory';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
+import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
 import { AppSettings, AppView, User } from './types';
 
@@ -34,7 +34,6 @@ const App: React.FC = () => {
       const saved = localStorage.getItem(SETTINGS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Ensure we don't lose contacts on load
         return { 
           ...DEFAULT_SETTINGS, 
           ...parsed, 
@@ -53,12 +52,10 @@ const App: React.FC = () => {
 
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
 
-  // Sync settings to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  // Sync alert state to localStorage
   useEffect(() => {
     if (activeAlertId) {
       localStorage.setItem(ACTIVE_ALERT_KEY, activeAlertId);
@@ -98,29 +95,35 @@ const App: React.FC = () => {
         </button>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-6 pb-28">
+      <main className="flex-1 overflow-y-auto">
         {appView === AppView.DASHBOARD && (
-          <Dashboard 
-            user={user} 
-            settings={settings} 
-            updateSettings={(s) => setSettings(p => ({...p, ...s}))}
-            isEmergency={isEmergency}
-            onAlert={(log) => setActiveAlertId(log.id)}
-            externalActiveAlertId={activeAlertId}
-            onClearAlert={() => setActiveAlertId(null)}
-          />
+          <div className="p-6 pb-28">
+            <Dashboard 
+              user={user} 
+              settings={settings} 
+              updateSettings={(s) => setSettings(p => ({...p, ...s}))}
+              isEmergency={isEmergency}
+              onAlert={(log) => setActiveAlertId(log.id)}
+              externalActiveAlertId={activeAlertId}
+              onClearAlert={() => setActiveAlertId(null)}
+            />
+          </div>
         )}
-        {appView === AppView.MESH && <AlertHistory user={user} logs={[]} clearLogs={() => {}} />}
+        {appView === AppView.MESSENGER && (
+          <Messenger user={user} settings={settings} activeAlertId={activeAlertId} />
+        )}
         {appView === AppView.SETTINGS && (
-          <SettingsPanel settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} />
+          <div className="p-6 pb-28">
+            <SettingsPanel settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} />
+          </div>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] via-[#020617] to-transparent z-50">
+      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] via-[#020617] to-transparent z-40">
         <div className="flex justify-around items-center glass p-2 rounded-[2.5rem] border border-white/10 shadow-2xl">
           {[
             { id: AppView.DASHBOARD, icon: Home, label: 'Safety' },
-            { id: AppView.MESH, icon: Radio, label: 'Network' },
+            { id: AppView.MESSENGER, icon: MessageSquare, label: 'Chats' },
             { id: AppView.SETTINGS, icon: Settings, label: 'Settings' }
           ].map(item => (
             <button 

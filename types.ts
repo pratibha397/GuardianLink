@@ -47,7 +47,7 @@ export interface SafeSpot {
 
 export enum AppView {
   DASHBOARD = 'DASHBOARD',
-  MESH = 'MESH',
+  MESSENGER = 'MESSENGER',
   SETTINGS = 'SETTINGS'
 }
 
