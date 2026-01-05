@@ -5,6 +5,7 @@ import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
+import { db, doc, getDoc, setDoc } from './services/firebase';
 import { AppSettings, AppView, User } from './types';
 
 const SETTINGS_KEY = 'guardian_link_settings_v3';
@@ -29,22 +30,7 @@ const App: React.FC = () => {
   
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
   
-  const [settings, setSettings] = useState<AppSettings>(() => {
-    try {
-      const saved = localStorage.getItem(SETTINGS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return { 
-          ...DEFAULT_SETTINGS, 
-          ...parsed, 
-          contacts: Array.isArray(parsed.contacts) ? parsed.contacts : [] 
-        };
-      }
-    } catch (e) {
-      console.error("Load settings failed", e);
-    }
-    return DEFAULT_SETTINGS;
-  });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   const [activeAlertId, setActiveAlertId] = useState<string | null>(() => {
     return localStorage.getItem(ACTIVE_ALERT_KEY);
@@ -52,9 +38,52 @@ const App: React.FC = () => {
 
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
 
+  // Fetch settings from Firestore on login
   useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settings]);
+    if (!user) return;
+
+    const fetchSettings = async () => {
+      try {
+        // First try local storage for immediate UI
+        const local = localStorage.getItem(SETTINGS_KEY);
+        if (local) {
+          setSettings(JSON.parse(local));
+        }
+
+        // Then sync from Cloud
+        const docRef = doc(db, "settings", user.email.toLowerCase());
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          const cloudSettings = docSnap.data() as AppSettings;
+          setSettings(cloudSettings);
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify(cloudSettings));
+        } else {
+          // If no cloud settings, initialize them with current/default
+          await setDoc(docRef, settings);
+        }
+      } catch (e) {
+        console.error("Failed to sync settings from cloud", e);
+      }
+    };
+
+    fetchSettings();
+  }, [user?.id]);
+
+  // Persist settings locally and to cloud whenever they change
+  const updateSettings = async (newSettings: Partial<AppSettings>) => {
+    const updated = { ...settings, ...newSettings };
+    setSettings(updated);
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
+
+    if (user) {
+      try {
+        await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
+      } catch (e) {
+        console.error("Failed to save settings to cloud", e);
+      }
+    }
+  };
 
   useEffect(() => {
     if (activeAlertId) {
@@ -69,7 +98,9 @@ const App: React.FC = () => {
   const handleLogout = () => {
     localStorage.removeItem('guardian_user');
     localStorage.removeItem(ACTIVE_ALERT_KEY);
+    localStorage.removeItem(SETTINGS_KEY);
     setUser(null);
+    setSettings(DEFAULT_SETTINGS);
   };
 
   if (!user) {
@@ -101,7 +132,7 @@ const App: React.FC = () => {
             <Dashboard 
               user={user} 
               settings={settings} 
-              updateSettings={(s) => setSettings(p => ({...p, ...s}))}
+              updateSettings={updateSettings}
               isEmergency={isEmergency}
               onAlert={(log) => setActiveAlertId(log.id)}
               externalActiveAlertId={activeAlertId}
@@ -114,7 +145,7 @@ const App: React.FC = () => {
         )}
         {appView === AppView.SETTINGS && (
           <div className="p-6 pb-28">
-            <SettingsPanel settings={settings} updateSettings={(s) => setSettings(p => ({...p, ...s}))} />
+            <SettingsPanel settings={settings} updateSettings={updateSettings} />
           </div>
         )}
       </main>

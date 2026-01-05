@@ -9,7 +9,7 @@ import {
   updateProfile
 } from "firebase/auth";
 import { DataSnapshot, getDatabase, onValue, push, ref, set, update } from "firebase/database";
-import { collection, doc, getDoc, getDocs, getFirestore, query, setDoc, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, getFirestore, query, setDoc, updateDoc, where } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY || "",
@@ -38,7 +38,7 @@ export {
 };
 
 // Firestore Exports
-  export { collection, doc, getDoc, getDocs, query, setDoc, where };
+  export { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where };
 
 // Database Exports
   export { onValue, push, ref, set, update };

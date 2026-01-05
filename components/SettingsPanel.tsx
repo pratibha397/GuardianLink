@@ -1,8 +1,7 @@
 
+import { AlertCircle, CheckCircle2, Mic, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-// Added Shield to the lucide-react imports to fix the "Cannot find name 'Shield'" error on line 151
-import { AlertCircle, CheckCircle2, Mic, Search, Shield, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
-import { collection, db, getDocs, query, where } from '../services/firebase';
+import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
 
 interface SettingsPanelProps {
@@ -15,7 +14,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
   const [isSearching, setIsSearching] = useState(false);
   const [lookupResult, setLookupResult] = useState<'found' | 'not_found' | null>(null);
 
-  // Hardened verification for Mesh Nodes
   const checkUserExists = async (inputEmail: string) => {
     const normalized = inputEmail.trim().toLowerCase();
     if (normalized.length < 5 || !normalized.includes('@')) {
@@ -27,11 +25,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
     setLookupResult(null);
 
     try {
-      const q = query(collection(db, "users"), where("email", "==", normalized));
-      const snap = await getDocs(q);
-      setLookupResult(snap.empty ? 'not_found' : 'found');
+      // Lookup the user by their email in the 'users' collection
+      const userRef = doc(db, "users", normalized);
+      const userSnap = await getDoc(userRef);
+      
+      setLookupResult(userSnap.exists() ? 'found' : 'not_found');
     } catch (error) {
-      console.warn("User fetch failed", error);
+      console.warn("User lookup failed", error);
       setLookupResult('not_found');
     } finally {
       setIsSearching(false);
@@ -41,7 +41,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
   useEffect(() => {
     const timer = setTimeout(() => {
       if (newContact.email) checkUserExists(newContact.email);
-    }, 1000);
+    }, 600);
     return () => clearTimeout(timer);
   }, [newContact.email]);
 
@@ -54,13 +54,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
         isRegisteredUser: lookupResult === 'found'
       };
       
-      // CRITICAL FIX: Ensure we spread the existing array to prevent erasure
       const currentContacts = Array.isArray(settings.contacts) ? settings.contacts : [];
       const updatedContacts = [...currentContacts, contact];
       
       updateSettings({ contacts: updatedContacts });
       
-      // Reset
       setNewContact({ name: '', email: '' });
       setLookupResult(null);
     }
@@ -86,7 +84,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             onChange={(e) => updateSettings({ triggerPhrase: e.target.value })}
             className="w-full bg-slate-900/50 border border-white/5 rounded-2xl px-6 py-5 text-sm font-black text-white focus:border-blue-500 outline-none"
           />
-          <p className="text-[9px] text-slate-600 mt-4 font-bold uppercase tracking-widest">Say this to trigger the mesh SOS.</p>
         </div>
       </section>
 
@@ -106,7 +103,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             <input 
               type="email" placeholder="Guardian Email" value={newContact.email}
               onChange={(e) => setNewContact(p => ({...p, email: e.target.value}))}
-              className="w-full bg-slate-900 border border-white/5 rounded-2xl py-4 px-6 text-xs text-white font-bold pr-14 outline-none focus:border-blue-500"
+              className="w-full bg-slate-950 border border-white/5 rounded-2xl py-4 px-6 text-xs text-white font-bold pr-14 outline-none focus:border-blue-500"
             />
             <div className="absolute right-5 top-1/2 -translate-y-1/2">
               {isSearching ? <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /> : 
@@ -147,12 +144,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
               <button onClick={() => removeContact(c.id)} className="text-slate-700 hover:text-red-500 transition-colors p-3"><Trash2 size={20} /></button>
             </div>
           ))}
-          {(!settings.contacts || settings.contacts.length === 0) && (
-            <div className="text-center py-16 opacity-10">
-              <Shield size={64} className="mx-auto mb-4" />
-              <p className="text-[10px] uppercase font-bold tracking-[0.5em]">Network Isolated</p>
-            </div>
-          )}
         </div>
       </section>
     </div>

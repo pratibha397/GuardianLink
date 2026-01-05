@@ -36,7 +36,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     setError(null);
     setSuccessMsg(null);
 
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
     if (!isValidEmail(cleanEmail)) {
       setError("Please enter a valid email address.");
@@ -50,10 +50,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
     setLoading(true);
 
-    // If Firebase is not configured, we provide a "Demo Bypass" 
-    // This allows users in restricted environments to see the app functionality.
     if (!isFirebaseConfigured) {
-      console.warn("GuardianLink: Firebase is not configured. Entering Local Demo mode.");
       setTimeout(() => {
         onLogin({
           id: 'demo_user',
@@ -79,53 +76,44 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         await updateProfile(credential.user, { displayName: name.trim() });
         
-        setDoc(doc(db, "users", cleanEmail.toLowerCase()), {
+        // Explicitly write user info to the users collection for lookup by email
+        await setDoc(doc(db, "users", cleanEmail), {
           uid: credential.user.uid,
-          email: cleanEmail.toLowerCase(),
+          email: cleanEmail,
           name: name.trim(),
           createdAt: Date.now()
-        }).catch(err => console.warn("Sync delayed:", err));
+        });
 
         onLogin({
           id: credential.user.uid,
-          email: cleanEmail.toLowerCase(),
+          email: cleanEmail,
           name: name.trim()
         });
       } else {
         const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
         let finalName = credential.user.displayName || '';
 
-        if (!finalName) {
-          try {
-            const userSnap = await getDoc(doc(db, "users", cleanEmail.toLowerCase()));
-            if (userSnap.exists()) finalName = userSnap.data().name;
-          } catch (dbErr) {
-            console.warn("DB lookup failed");
-          }
+        // If display name missing, pull from Firestore "users" table
+        const userSnap = await getDoc(doc(db, "users", cleanEmail));
+        if (userSnap.exists()) {
+          finalName = userSnap.data().name;
         }
 
         onLogin({ 
           id: credential.user.uid, 
-          email: cleanEmail.toLowerCase(),
+          email: cleanEmail,
           name: finalName || 'User' 
         });
       }
     } catch (err: any) {
-      console.error("Auth Error:", err.code, err.message);
+      console.error("Auth Error:", err);
       let message = "An error occurred during authentication.";
-      
       switch (err.code) {
         case 'auth/email-already-in-use': message = "This email is already registered."; break;
         case 'auth/invalid-credential':
         case 'auth/wrong-password': message = "Incorrect email or password."; break;
         case 'auth/user-not-found': message = "No account exists with this email."; break;
-        case 'auth/network-request-failed': message = "Network error. Check your connection."; break;
-        case 'auth/configuration-not-found': 
-        case 'auth/invalid-api-key':
-          message = "Firebase configuration is invalid. Entering demo mode...";
-          setTimeout(() => onLogin({ id: 'demo', email: cleanEmail, name: 'Demo User' }), 1500);
-          return;
-        default: message = "Sign in failed. Ensure your account is valid.";
+        default: message = err.message || "Sign in failed.";
       }
       setError(message);
     } finally {
@@ -218,24 +206,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               )}
             </div>
 
-            {!isFirebaseConfigured && (
-              <div className="text-[10px] text-amber-500 font-bold uppercase text-center bg-amber-500/10 p-2 rounded-xl border border-amber-500/20">
-                ⚠️ Local Demo Mode Active
-              </div>
-            )}
-
-            {view === 'login' && (
-              <div className="text-right">
-                <button 
-                  type="button" 
-                  onClick={() => setView('forgot')}
-                  className="text-[11px] font-bold text-slate-500 hover:text-blue-500 transition-colors"
-                >
-                  Forgot Password?
-                </button>
-              </div>
-            )}
-
             {error && (
               <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 p-4 rounded-2xl animate-in slide-in-from-top-1">
                 <AlertCircle size={16} className="text-red-500 shrink-0" />
@@ -254,21 +224,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               type="submit" disabled={loading} 
               className="w-full bg-blue-600 hover:bg-blue-500 py-4.5 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl shadow-blue-600/20 active:scale-95 transition-all disabled:opacity-50"
             >
-              {loading ? (
-                <div className="flex items-center justify-center gap-3">
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Processing...</span>
-                </div>
-              ) : (
-                view === 'register' ? "Register Account" : (view === 'login' ? "Login" : "Reset Password")
-              )}
+              {loading ? "Processing..." : (view === 'register' ? "Register Account" : (view === 'login' ? "Login" : "Reset Password"))}
             </button>
           </form>
         </div>
-        
-        <p className="text-center text-[10px] text-slate-600 font-bold uppercase tracking-[0.3em]">
-          End-to-End Encrypted • Spark Tier Free
-        </p>
       </div>
     </div>
   );
