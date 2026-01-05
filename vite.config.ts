@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
+  // Use casting to any for process to fix the "Property 'cwd' does not exist on type 'Process'" error
+  const env = loadEnv(mode, (process as any).cwd(), '');
   
   const envDefinitions = Object.keys(env).reduce((acc, key) => {
     if (key.startsWith('FIREBASE_') || key === 'API_KEY') {
