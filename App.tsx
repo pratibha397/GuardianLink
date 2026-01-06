@@ -29,50 +29,50 @@ const App: React.FC = () => {
   });
   
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
-  
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-
   const [activeAlertId, setActiveAlertId] = useState<string | null>(() => {
     return localStorage.getItem(ACTIVE_ALERT_KEY);
   });
-
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
 
-  // Fetch settings from Firestore on login
+  // Sync settings when user logs in
   useEffect(() => {
     if (!user) return;
 
     const fetchSettings = async () => {
       try {
-        // 1. Initial local state (fast)
-        const local = localStorage.getItem(SETTINGS_KEY);
-        if (local) {
-          try {
-            setSettings(JSON.parse(local));
-          } catch (e) {
-            console.error("Local settings corrupt", e);
-          }
-        }
-
-        // 2. Sync from Cloud (source of truth)
         const userEmail = user.email.toLowerCase();
         const docRef = doc(db, "settings", userEmail);
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
-          const cloudSettings = docSnap.data() as AppSettings;
-          // Ensure contacts is always an array
-          if (!Array.isArray(cloudSettings.contacts)) {
-            cloudSettings.contacts = [];
-          }
+          const cloudData = docSnap.data() as AppSettings;
+          // Ensure contacts is always initialized as an array
+          const cloudSettings = {
+            ...DEFAULT_SETTINGS,
+            ...cloudData,
+            contacts: Array.isArray(cloudData.contacts) ? cloudData.contacts : []
+          };
+          
           setSettings(cloudSettings);
           localStorage.setItem(SETTINGS_KEY, JSON.stringify(cloudSettings));
         } else {
-          // If no cloud settings exist, create them for the first time
-          await setDoc(docRef, settings);
+          // If user exists but has no cloud settings (first login), 
+          // check local storage fallback or use defaults
+          const local = localStorage.getItem(SETTINGS_KEY);
+          if (local) {
+             const localData = JSON.parse(local);
+             await setDoc(docRef, localData);
+             setSettings(localData);
+          } else {
+             await setDoc(docRef, DEFAULT_SETTINGS);
+             setSettings(DEFAULT_SETTINGS);
+          }
         }
       } catch (e) {
-        console.error("Failed to sync settings from cloud", e);
+        console.error("Cloud sync failed, using local fallback", e);
+        const local = localStorage.getItem(SETTINGS_KEY);
+        if (local) setSettings(JSON.parse(local));
       }
     };
 

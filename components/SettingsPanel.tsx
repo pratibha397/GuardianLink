@@ -1,5 +1,5 @@
 
-import { AlertCircle, CheckCircle2, Mic, Search, Shield, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Mic, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
@@ -16,6 +16,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
 
   const checkUserExists = async (inputEmail: string) => {
     const normalized = inputEmail.trim().toLowerCase();
+    
+    // Only search if it looks like a valid email
     if (normalized.length < 5 || !normalized.includes('@')) {
       setLookupResult(null);
       return;
@@ -26,18 +28,21 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
 
     try {
       // Lookup the user by their normalized email in the 'users' collection
-      // Document IDs are case-sensitive in Firestore, so we must be consistent
+      // Document IDs are consistent because AuthScreen lowercases them
       const userRef = doc(db, "users", normalized);
       const userSnap = await getDoc(userRef);
       
       if (userSnap.exists()) {
         setLookupResult('found');
+        // Pre-fill the name if found
+        if (!newContact.name.trim()) {
+           setNewContact(prev => ({ ...prev, name: userSnap.data().name }));
+        }
       } else {
         setLookupResult('not_found');
       }
     } catch (error) {
       console.warn("User lookup failed", error);
-      // In case of error (like permission denied), treat as not found for safety
       setLookupResult('not_found');
     } finally {
       setIsSearching(false);
@@ -51,7 +56,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       } else {
         setLookupResult(null);
       }
-    }, 600);
+    }, 800);
     return () => clearTimeout(timer);
   }, [newContact.email]);
 
@@ -117,16 +122,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
         </div>
 
         <div className="bg-slate-950 p-8 rounded-[3rem] border border-white/5 space-y-5 shadow-2xl">
-          <input 
-            type="text" placeholder="Guardian Name" value={newContact.name}
-            onChange={(e) => setNewContact(p => ({...p, name: e.target.value}))}
-            className="w-full bg-slate-900 border border-white/5 rounded-2xl px-6 py-4 text-xs text-white font-bold outline-none focus:border-blue-500"
-          />
           <div className="relative">
-            <input 
+             <input 
               type="email" placeholder="Guardian Email" value={newContact.email}
               onChange={(e) => setNewContact(p => ({...p, email: e.target.value}))}
-              className="w-full bg-slate-950 border border-white/5 rounded-2xl py-4 px-6 text-xs text-white font-bold pr-14 outline-none focus:border-blue-500"
+              className={`w-full bg-slate-950 border rounded-2xl py-4 px-6 text-xs text-white font-bold pr-14 outline-none transition-colors ${lookupResult === 'found' ? 'border-green-500/50' : lookupResult === 'not_found' ? 'border-red-500/50' : 'border-white/5 focus:border-blue-500'}`}
             />
             <div className="absolute right-5 top-1/2 -translate-y-1/2">
               {isSearching ? <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /> : 
@@ -134,6 +134,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
                lookupResult === 'not_found' ? <AlertCircle size={20} className="text-red-500" /> : <Search size={20} className="text-slate-800" />}
             </div>
           </div>
+
+          <input 
+            type="text" placeholder="Guardian Name" value={newContact.name}
+            onChange={(e) => setNewContact(p => ({...p, name: e.target.value}))}
+            className="w-full bg-slate-900 border border-white/5 rounded-2xl px-6 py-4 text-xs text-white font-bold outline-none focus:border-blue-500"
+          />
           
           <button 
             onClick={addContact} 
@@ -144,7 +150,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           </button>
           
           {lookupResult === 'not_found' && newContact.email && !isSearching && (
-            <p className="text-[10px] text-red-400 font-bold uppercase text-center">Guardian not found in Aegis network.</p>
+            <p className="text-[10px] text-red-400 font-bold uppercase text-center">User not found. They will receive SMS only.</p>
+          )}
+          {lookupResult === 'found' && (
+             <p className="text-[10px] text-green-500 font-bold uppercase text-center flex items-center justify-center gap-2 italic">
+               <ShieldCheck size={12} /> Verified Aegis Node
+             </p>
           )}
         </div>
 
@@ -152,7 +163,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           {(settings.contacts || []).map(c => (
             <div key={c.id} className="bg-slate-900/40 border border-white/5 p-6 rounded-[2.5rem] flex items-center justify-between shadow-lg group">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center font-black text-lg text-slate-500 uppercase">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg uppercase ${c.isRegisteredUser ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
                   {c.name ? c.name[0] : '?'}
                 </div>
                 <div>
@@ -176,12 +187,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
               </button>
             </div>
           ))}
-          {(!settings.contacts || settings.contacts.length === 0) && (
-            <div className="text-center py-16 opacity-10">
-              <Shield size={64} className="mx-auto mb-4" />
-              <p className="text-[10px] uppercase font-bold tracking-[0.5em]">Network Isolated</p>
-            </div>
-          )}
         </div>
       </section>
     </div>

@@ -31,6 +31,20 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
   const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
+  // Helper to ensure user is in discovery database
+  const syncUserProfile = async (uid: string, email: string, displayName: string) => {
+    try {
+      await setDoc(doc(db, "users", email.toLowerCase()), {
+        uid,
+        email: email.toLowerCase(),
+        name: displayName,
+        lastActive: Date.now()
+      }, { merge: true });
+    } catch (e) {
+      console.error("Discovery sync failed", e);
+    }
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -76,13 +90,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         await updateProfile(credential.user, { displayName: name.trim() });
         
-        // Explicitly write user info to the users collection for lookup by email
-        await setDoc(doc(db, "users", cleanEmail), {
-          uid: credential.user.uid,
-          email: cleanEmail,
-          name: name.trim(),
-          createdAt: Date.now()
-        });
+        await syncUserProfile(credential.user.uid, cleanEmail, name.trim());
 
         onLogin({
           id: credential.user.uid,
@@ -91,18 +99,21 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         });
       } else {
         const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        let finalName = credential.user.displayName || '';
+        let finalName = credential.user.displayName || 'User';
 
-        // If display name missing, pull from Firestore "users" table
+        // Check firestore for the name if display name is null (common in firebase)
         const userSnap = await getDoc(doc(db, "users", cleanEmail));
         if (userSnap.exists()) {
           finalName = userSnap.data().name;
         }
 
+        // Sync again to ensure discoverability and update timestamp
+        await syncUserProfile(credential.user.uid, cleanEmail, finalName);
+
         onLogin({ 
           id: credential.user.uid, 
           email: cleanEmail,
-          name: finalName || 'User' 
+          name: finalName
         });
       }
     } catch (err: any) {
