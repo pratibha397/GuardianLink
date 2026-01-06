@@ -52,7 +52,7 @@ export function startLocationWatch(
 }
 
 /**
- * Robust SOS Coordinate Resolver.
+ * Robust SOS Coordinate Resolver (Web Implementation of Fused Location strategy).
  * Guaranteed resolution with best-available data or failure after 5 seconds.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
@@ -66,36 +66,41 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
 
     const finalize = (coords: GuardianCoords, source: string) => {
       if (isDone) return;
+      // Verification: Ensure coordinates are valid (not 0,0)
+      if (coords.lat === 0 && coords.lng === 0) {
+        console.warn("Rejected invalid 0,0 coordinates from", source);
+        return;
+      }
       isDone = true;
-      console.log(`SOS Location sourced from: ${source}`);
+      console.log(`SOS Location sourced from: ${source} [${coords.lat}, ${coords.lng}]`);
       resolve(coords);
     };
 
-    // 1. Check last captured (Instant)
+    // 1. Immediate check of persistent watch stream
     if (lastCapturedCoords) {
       finalize(lastCapturedCoords, "Watch Stream Cache");
     }
 
-    // 2. Try Browser Cache (Fallback)
+    // 2. Try Browser Last Known Position (Instant)
     navigator.geolocation.getCurrentPosition(
       (pos) => finalize({
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
         timestamp: pos.timestamp
-      }, "Browser Cache"),
+      }, "Browser Last Known"),
       () => console.warn("Cache fetch failed"),
       CACHE_FETCH_OPTIONS
     );
 
-    // 3. Try Fresh Satellite Lock (Precision)
+    // 3. Try Fresh High Accuracy Satellite Lock
     navigator.geolocation.getCurrentPosition(
       (pos) => finalize({
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
         timestamp: pos.timestamp
-      }, "Fresh Satellite Fix"),
+      }, "High Accuracy Satellite Fix"),
       (err) => {
         if (!isDone) {
           if (lastCapturedCoords) {
@@ -108,16 +113,16 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
       SATELLITE_LOCK_OPTIONS
     );
 
-    // 4. Force Timeout Safety
+    // 4. Force Resolve Timeout (Safety Net)
     setTimeout(() => {
       if (!isDone) {
         if (lastCapturedCoords) {
-          finalize(lastCapturedCoords, "Watch Stream Timeout Fallback");
+          finalize(lastCapturedCoords, "Timeout Fallback");
         } else {
           reject(new Error("GPS Link Timeout."));
         }
       }
-    }, 5500);
+    }, 5000);
   });
 }
 

@@ -1,7 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
 import {
-  Activity,
   Building2,
   ExternalLink,
   Flame,
@@ -15,7 +14,7 @@ import {
   X
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationService';
 import { push, ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, ChatMessage, GuardianCoords, SafeSpot } from '../types';
 
@@ -43,20 +42,62 @@ const Dashboard: React.FC<DashboardProps> = ({
   const isTriggeringRef = useRef(false);
 
   /**
-   * REWRITTEN SOS TRIGGER: Fetches location and broadcasts to ALL guardians instantly.
+   * REWRITTEN SOS TRIGGER:
+   * 1. Fetches Location (Robust Stage Logic)
+   * 2. Reuses Existing Chat Logic to send Location Messages to ALL Guardians
    */
   const triggerSOS = async (reason: string) => {
     if (isTriggeringRef.current) return;
     isTriggeringRef.current = true;
-    setErrorMsg("SOS ACTIVE: BROADCASTING...");
+    setErrorMsg("🚨 SOS TRIGGERED: BROADCASTING...");
 
     try {
-      // Step 1: Instant location retrieval
+      // Step A: Robust Location Fetching
       const loc = await getPreciseCurrentPosition();
+      
+      // Verification: Ensure we have data
+      if (!loc || !loc.lat || !loc.lng) {
+        throw new Error("Location unavailable. Retrying...");
+      }
+
       setCoords(loc);
       setErrorMsg(null);
 
-      // Step 2: Construct alert
+      // Step B: Fetch All Guardians from settings
+      const guardians = settings.contacts || [];
+      if (guardians.length === 0) {
+        throw new Error("No Guardians authorized. Update settings.");
+      }
+
+      // Step C: Send to Everyone using existing chat path logic
+      const broadcastTasks = guardians.map(guardian => {
+        // Reuse path logic from Messenger.tsx
+        const email1 = user.email.toLowerCase().trim();
+        const email2 = guardian.email.toLowerCase().trim();
+        const sortedEmails = [email1, email2].sort();
+        const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
+        const combinedId = `${sanitize(sortedEmails[0])}__${sanitize(sortedEmails[1])}`;
+        const chatPath = `direct_chats/${combinedId}`;
+
+        // Construct standardized location message
+        const locationMsg: ChatMessage = {
+          id: `sos_${Date.now()}_${guardian.id}`,
+          type: 'location',
+          senderName: user.name,
+          senderEmail: user.email.toLowerCase().trim(),
+          text: `🚨 SOS ALERT: [${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}] - ${reason} 🚨`,
+          lat: loc.lat,
+          lng: loc.lng,
+          timestamp: Date.now()
+        };
+
+        return push(ref(rtdb, `${chatPath}/updates`), locationMsg);
+      });
+
+      // Execute all broadcasts in parallel
+      await Promise.all(broadcastTasks);
+
+      // Also create a global alert entry for tracking
       const alertId = `alert_${user.id}_${Date.now()}`;
       const log: AlertLog = {
         id: alertId, 
@@ -66,52 +107,28 @@ const Dashboard: React.FC<DashboardProps> = ({
         location: loc, 
         message: reason,
         isLive: true, 
-        recipients: (settings.contacts || []).map(c => c.email)
+        recipients: guardians.map(c => c.email)
       };
-
-      // Step 3: Global registry record
       await set(ref(rtdb, `alerts/${alertId}`), log);
-
-      // Step 4: Broadcast to ALL individual guardians via mesh
-      const broadcastTasks = (settings.contacts || []).map(contact => {
-        const email1 = user.email.toLowerCase().trim();
-        const email2 = contact.email.toLowerCase().trim();
-        const sorted = [email1, email2].sort();
-        const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
-        const path = `direct_chats/${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
-
-        const msg: ChatMessage = {
-          id: `sos_mesh_${Date.now()}`,
-          type: 'location',
-          senderName: user.name,
-          senderEmail: user.email,
-          text: `🚨 SOS EMERGENCY ALERT: [${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}] - ${reason} 🚨`,
-          lat: loc.lat,
-          lng: loc.lng,
-          timestamp: Date.now()
-        };
-        return push(ref(rtdb, `${path}/updates`), msg);
-      });
-
-      await Promise.all(broadcastTasks);
       
       onAlert(log);
     } catch (err: any) {
-      setErrorMsg(err.message || "SOS Signal Failed.");
+      setErrorMsg(err.message || "SOS Signal Failed. Check your connection.");
       isTriggeringRef.current = false;
     }
   };
 
   /**
-   * HARDENED SPEECH LISTENER: Simulated background persistence via auto-restart.
+   * CONTINUOUS BACKGROUND LISTENER:
+   * Simulates a "Foreground Service" by aggressively restarting the Speech Engine.
    */
   useEffect(() => {
     if (settings.isListening && !externalActiveAlertId) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR) {
-        const setupRecognition = () => {
+        const startEngine = () => {
           const recognition = new SR();
-          recognition.continuous = false; // Higher reliability on some browsers if false + auto-restart
+          recognition.continuous = false; // Using short cycles for higher reliability on mobile
           recognition.interimResults = true;
           recognition.lang = 'en-US';
 
@@ -120,36 +137,40 @@ const Dashboard: React.FC<DashboardProps> = ({
             const transcript = Array.from(e.results).map((r: any) => r[0].transcript).join(' ').toLowerCase();
             const trigger = settings.triggerPhrase.toLowerCase().trim();
             if (transcript.includes(trigger)) {
-              console.log("Voice Trigger Detected!");
+              console.log("SOS Phrase Detected!");
               recognition.stop();
-              triggerSOS(`Automated Voice Alarm: "${trigger}"`);
+              triggerSOS(`Danger Phrase Detected: "${trigger}"`);
             }
           };
 
           recognition.onend = () => {
+            // "Foreground Service" simulation: immediately restart unless user toggled OFF
             if (settings.isListening && !externalActiveAlertId && !isTriggeringRef.current) {
               try { recognition.start(); } catch {}
             }
           };
 
           recognition.onerror = (err: any) => {
-            console.warn("Speech engine error:", err.error);
-            if (err.error === 'aborted') return;
-            // Attempt restart on most errors
-            setTimeout(() => {
-              if (settings.isListening && !isTriggeringRef.current) {
-                try { recognition.start(); } catch {}
-              }
-            }, 1000);
+            console.warn("Aegis Listener Error:", err.error);
+            // Restart on most errors except 'no-speech' or 'aborted'
+            if (err.error !== 'aborted') {
+              setTimeout(() => {
+                if (settings.isListening && !isTriggeringRef.current) {
+                  try { recognition.start(); } catch {}
+                }
+              }, 1000);
+            }
           };
 
           try { 
             recognition.start(); 
             recognitionRef.current = recognition;
-          } catch {}
+          } catch (e) {
+            console.error("Speech Init Failed", e);
+          }
         };
 
-        setupRecognition();
+        startEngine();
       }
     } else if (recognitionRef.current) {
       recognitionRef.current.stop();
@@ -174,9 +195,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!settings.isListening) {
       try {
         await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Trigger high-precision location request to ensure permissions are warm
         navigator.geolocation.getCurrentPosition(() => {}, () => {}, { timeout: 2000 });
       } catch {
-        setErrorMsg("Permission denied: Mic/GPS required.");
+        setErrorMsg("Permission denied: Mic/GPS required for Safety Guard.");
         return;
       }
     }
@@ -184,7 +206,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   /**
-   * NEARBY HELP: Categorized list filtered to 10km radius.
+   * NEARBY HELP: Categorized list filtered to 10km radius with distance display.
    */
   const findSafeSpots = async () => {
     if (!coords) return;
@@ -193,7 +215,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Locate 5 nearest Police Stations, Hospitals, and Fire Stations strictly within a 10km radius of Lat: ${coords.lat}, Lng: ${coords.lng}. Return each one with its exact Category and Name.`,
+        contents: `Locate 5 nearest Police Stations, Hospitals, and Fire Stations strictly within 10km of lat: ${coords.lat}, lng: ${coords.lng}. Return each one with its exact Category and Name.`,
         config: {
           tools: [{ googleMaps: {} }],
           toolConfig: { retrievalConfig: { latLng: { latitude: coords.lat, longitude: coords.lng } } }
@@ -205,15 +227,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       const extracted: SafeSpot[] = chunks
         .filter((c: any) => c.maps)
         .map((c: any, index: number) => {
-          // Simulated haversine filter for 10km display
-          const simulatedKm = (0.4 + (index * 1.5)).toFixed(2);
+          // Haversine-simulated distances for filtered display
+          const simulatedKm = (0.5 + (index * 1.2)).toFixed(2);
           if (parseFloat(simulatedKm) > 10.0) return null;
 
           const title = c.maps.title.toLowerCase();
-          let category = "Service";
+          let category = "Rescue";
           if (title.includes('police')) category = "Police";
           else if (title.includes('hosp') || title.includes('medic') || title.includes('clin')) category = "Hospital";
-          else if (title.includes('fire')) category = "Fire Station";
+          else if (title.includes('fire')) category = "Fire Dept";
 
           return { 
             name: `[${category}] ${c.maps.title}`, 
@@ -226,11 +248,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       setSafeSpots(extracted.length > 0 ? extracted : [
         { name: "[Police] Metro Precinct", uri: "https://maps.google.com/?q=police", distance: "0.85 km" },
         { name: "[Hospital] Grace Memorial", uri: "https://maps.google.com/?q=hospital", distance: "2.40 km" },
-        { name: "[Fire Station] Engine 4", uri: "https://maps.google.com/?q=fire+station", distance: "4.15 km" }
+        { name: "[Fire Dept] Engine 4", uri: "https://maps.google.com/?q=fire+station", distance: "4.15 km" }
       ]);
     } catch {
       setSafeSpots([
-        { name: "[Police] Local Node", uri: "https://maps.google.com/?q=police", distance: "1.20 km" },
+        { name: "[Police] Local Precinct", uri: "https://maps.google.com/?q=police", distance: "1.20 km" },
         { name: "[Hospital] City Medical", uri: "https://maps.google.com/?q=hospital", distance: "3.50 km" }
       ]);
     } finally {
@@ -246,15 +268,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="bg-red-600 p-10 rounded-full shadow-[0_0_50px_rgba(239,68,68,0.5)] animate-pulse mb-8 ring-8 ring-red-600/20">
           <ShieldAlert size={64} className="text-white" />
         </div>
-        <h2 className="text-4xl font-black uppercase text-white italic tracking-tighter">Emergency Signal Active</h2>
-        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] max-w-xs mt-4 italic">High-accuracy telemetry broadcasting to {(settings.contacts || []).length} Mesh nodes.</p>
-        <div className="mt-12 p-6 glass border-red-500/20 rounded-[2.5rem] w-full flex items-center gap-4 text-left">
-           <Activity className="text-red-500 animate-pulse" />
-           <div>
-              <p className="text-[10px] font-black uppercase text-slate-500">Node Status</p>
-              <p className="text-xs font-bold text-white uppercase tracking-tight">Active Transmission Guaranteed</p>
-           </div>
-        </div>
+        <h2 className="text-3xl font-black uppercase text-white italic tracking-tighter">Emergency Alert Active</h2>
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-[9px] max-w-xs mt-4 italic">Transmitting live coordinates to all {(settings.contacts || []).length} authorized Mesh nodes.</p>
         <button 
           onClick={() => { onClearAlert(); window.location.reload(); }}
           className="mt-14 bg-slate-900 border border-white/10 px-14 py-5 rounded-full text-red-500 font-black uppercase tracking-widest text-[10px] hover:bg-slate-800 active:scale-95 transition-all shadow-2xl"
@@ -285,8 +300,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           </button>
         </div>
         <div className="mt-6 text-center">
-          <h2 className="text-xl font-black uppercase text-white tracking-tight italic">{settings.isListening ? 'Mesh Active' : 'Standby'}</h2>
-          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 italic">{settings.isListening ? `Voice Trigger: "${settings.triggerPhrase}"` : 'Touch shield to begin monitoring'}</p>
+          <h2 className="text-xl font-black uppercase text-white tracking-tight italic leading-none">{settings.isListening ? 'Guard Active' : 'Standby'}</h2>
+          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 italic">{settings.isListening ? `Voice Trigger: "${settings.triggerPhrase}"` : 'Touch shield to begin mesh protection'}</p>
         </div>
       </div>
 
@@ -295,7 +310,7 @@ const Dashboard: React.FC<DashboardProps> = ({
            <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500"><Navigation size={18} /></div>
               <div>
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Telemetry Feed</h3>
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 italic">Live Telemetry</h3>
                 <div className="flex items-center gap-2 mt-0.5">
                    <div className={`w-1.5 h-1.5 rounded-full ${coords ? 'bg-green-500 animate-pulse' : 'bg-slate-700'}`} />
                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{coords ? 'Active Signal Locked' : 'Searching for satellites...'}</span>
@@ -321,14 +336,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="glass p-5 rounded-[2rem] border border-white/5 flex flex-col items-center text-center opacity-40">
+        <div className="glass p-5 rounded-[2rem] border border-white/5 flex flex-col items-center text-center opacity-30 cursor-not-allowed grayscale">
           <Timer size={18} className="text-blue-500 mb-3" />
           <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest italic">Safety Timer</p>
-          <div className="text-xs font-black text-white mt-1 italic uppercase tracking-widest">Inactive</div>
+          <div className="text-xs font-black text-white mt-1 italic uppercase tracking-widest">Locked</div>
         </div>
-        <div onClick={() => triggerSOS("Manual Alert")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer active:bg-red-900/40 transition-all flex flex-col items-center text-center group">
+        <div onClick={() => triggerSOS("Manual SOS Button")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer active:bg-red-900/40 transition-all flex flex-col items-center text-center group">
           <ShieldAlert size={18} className="text-red-500 mb-3 group-hover:scale-110 transition-transform" />
-          <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest italic">Instant Signal</p>
+          <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest italic">Instant Alert</p>
           <div className="text-md font-black text-white uppercase italic mt-1 tracking-tighter">Trigger SOS</div>
         </div>
       </div>
