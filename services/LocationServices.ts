@@ -2,25 +2,25 @@
 import { GuardianCoords } from '../types';
 
 /**
- * Priority 1: High Accuracy GPS (Satellite Lock)
+ * High-Speed Fallback: Fetches the last known location from cache instantly.
  */
-const HIGH_ACCURACY_OPTIONS: PositionOptions = {
-  enableHighAccuracy: true,
-  timeout: 10000,   // 10s for fresh lock
-  maximumAge: 0     // No caching
-};
-
-/**
- * Priority 2: Balanced/Cached Fallback
- */
-const BALANCED_OPTIONS: PositionOptions = {
+const FAST_FIX_OPTIONS: PositionOptions = {
   enableHighAccuracy: false,
-  timeout: 5000,
-  maximumAge: 30000 // 30s cache
+  timeout: 3000,
+  maximumAge: 300000 // 5 minutes cache
 };
 
 /**
- * Initiates a persistent watch for the UI telemetry.
+ * High-Precision Lock: Forces fresh satellite coordinates.
+ */
+const PRECISION_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  timeout: 10000,
+  maximumAge: 0
+};
+
+/**
+ * Persistent Location Stream for UI Telemetry.
  */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
@@ -52,8 +52,10 @@ export function startLocationWatch(
 }
 
 /**
- * Robust SOS Coordinate Acquisition Chain.
- * Ensures a valid fix is obtained before proceeding.
+ * Critical SOS Coordinate Fetcher.
+ * 1. Instantly tries to grab a cached location (2s timeout).
+ * 2. If no cache, waits up to 8s for a fresh precision lock.
+ * 3. Guaranteed to resolve with the best available data or fail.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
@@ -62,41 +64,54 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
       return;
     }
 
-    // Stage 1: Try High Accuracy (GPS Lock)
+    let hasResolved = false;
+
+    // Attempt 1: Fast Fix (Cached)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        if (pos.coords.latitude && pos.coords.longitude) {
+        if (!hasResolved) {
+          hasResolved = true;
           resolve({
             lat: pos.coords.latitude,
             lng: pos.coords.longitude,
             accuracy: pos.coords.accuracy,
-            speed: pos.coords.speed,
-            heading: pos.coords.heading,
             timestamp: pos.timestamp
           });
-        } else {
-          reject(new Error("Invalid coordinates received."));
         }
       },
-      (err) => {
-        console.warn("GPS lock failed, trying balanced fallback...", err.message);
-        
-        // Stage 2: Balanced/Cached Fallback
-        navigator.geolocation.getCurrentPosition(
-          (fallbackPos) => {
-            resolve({
-              lat: fallbackPos.coords.latitude,
-              lng: fallbackPos.coords.longitude,
-              accuracy: fallbackPos.coords.accuracy,
-              timestamp: fallbackPos.timestamp
-            });
-          },
-          () => reject(new Error("GPS signal timeout: Unable to establish emergency lock.")),
-          BALANCED_OPTIONS
-        );
+      () => {
+        console.warn("Fast-fix failed, awaiting precision lock...");
       },
-      HIGH_ACCURACY_OPTIONS
+      FAST_FIX_OPTIONS
     );
+
+    // Attempt 2: Precision Fix (Fresh) - Runs in parallel, takes precedence if faster or if cache fails
+    setTimeout(() => {
+      if (!hasResolved) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (!hasResolved) {
+              hasResolved = true;
+              resolve({
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                accuracy: pos.coords.accuracy,
+                speed: pos.coords.speed,
+                heading: pos.coords.heading,
+                timestamp: pos.timestamp
+              });
+            }
+          },
+          (err) => {
+            if (!hasResolved) {
+              hasResolved = true;
+              reject(new Error("SOS Fail: No GPS signal available. Check satellite visibility."));
+            }
+          },
+          PRECISION_OPTIONS
+        );
+      }
+    }, 100); // Tiny offset to give Fast Fix a chance to hit cache first
   });
 }
 
