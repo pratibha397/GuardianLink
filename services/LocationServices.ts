@@ -2,29 +2,38 @@
 import { GuardianCoords } from '../types';
 
 /**
- * Standard Geolocation Options configured for "High Accuracy" (GPS Priority).
- * Emulates Android's PRIORITY_HIGH_ACCURACY.
+ * Standard Geolocation Options.
+ * emulates PRIORITY_HIGH_ACCURACY for fresh satellite data.
  */
 const HIGH_ACCURACY_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
-  timeout: 15000,   // Increased to 15s for cold starts/indoor fixes
-  maximumAge: 0     // Force fresh satellite data, zero caching
+  timeout: 10000,   // Strict 10s window for SOS dispatch
+  maximumAge: 0     // No caching
 };
 
 /**
- * Initiates a persistent, high-frequency location watch.
- * Updates every time the hardware detects a shift in coordinates.
+ * Fast Fallback Options.
+ * Pulls the last known position from the browser cache immediately.
+ */
+const CACHED_FALLBACK_OPTIONS: PositionOptions = {
+  enableHighAccuracy: false,
+  timeout: 2000,
+  maximumAge: 600000 // 10 minutes cache
+};
+
+/**
+ * Persistent Watcher for Real-Time UI Updates.
  */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
   onError: (message: string) => void
 ): number {
   if (!navigator.geolocation) {
-    onError("Hardware Incompatibility: GPS missing.");
+    onError("GPS Hardware Missing");
     return -1;
   }
 
-  const watchId = navigator.geolocation.watchPosition(
+  return navigator.geolocation.watchPosition(
     (position) => {
       onUpdate({
         lat: position.coords.latitude,
@@ -37,59 +46,51 @@ export function startLocationWatch(
     },
     (error) => {
       let msg = "GPS Signal Error";
-      switch (error.code) {
-        case error.PERMISSION_DENIED:
-          msg = "Access Denied: Grant GPS permissions in settings.";
-          break;
-        case error.POSITION_UNAVAILABLE:
-          msg = "Satellite Fix Unavailable: Move to an open area.";
-          break;
-        case error.TIMEOUT:
-          msg = "GPS Signal Timed Out: Searching for satellites...";
-          break;
-      }
+      if (error.code === error.PERMISSION_DENIED) msg = "Location Access Denied";
       onError(msg);
     },
-    HIGH_ACCURACY_OPTIONS
+    { enableHighAccuracy: true, maximumAge: 5000 }
   );
-
-  return watchId;
 }
 
 /**
- * Performs a forced, high-priority location capture with retries.
- * Guaranteed to attempt high-accuracy locking before resolving.
+ * Robust SOS Coordinate Lock.
+ * Priority 1: Attempts fresh high-accuracy GPS fix (10s timeout).
+ * Priority 2: Falls back to last known location if GPS fails/times out.
  */
-export async function getPreciseCurrentPosition(retryCount = 2): Promise<GuardianCoords> {
+export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error("No GPS Hardware"));
       return;
     }
 
-    const attemptFetch = (remainingRetries: number) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          speed: pos.coords.speed,
-          heading: pos.coords.heading,
-          timestamp: pos.timestamp
-        }),
-        (err) => {
-          if (remainingRetries > 0) {
-            console.warn(`GPS fix failed, retrying... (${remainingRetries} left)`);
-            attemptFetch(remainingRetries - 1);
-          } else {
-            reject(err);
-          }
-        },
-        HIGH_ACCURACY_OPTIONS
-      );
-    };
-
-    attemptFetch(retryCount);
+    // Try High Accuracy first
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        speed: pos.coords.speed,
+        heading: pos.coords.heading,
+        timestamp: pos.timestamp
+      }),
+      (err) => {
+        console.warn("High-accuracy fix failed, attempting cached fallback...", err.message);
+        // Fallback to cached location
+        navigator.geolocation.getCurrentPosition(
+          (fallbackPos) => resolve({
+            lat: fallbackPos.coords.latitude,
+            lng: fallbackPos.coords.longitude,
+            accuracy: fallbackPos.coords.accuracy,
+            timestamp: fallbackPos.timestamp
+          }),
+          () => reject(new Error("Signal timeout: Unable to establish location lock.")),
+          CACHED_FALLBACK_OPTIONS
+        );
+      },
+      HIGH_ACCURACY_OPTIONS
+    );
   });
 }
 
