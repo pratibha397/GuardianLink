@@ -2,20 +2,17 @@
 import { GuardianCoords } from '../types';
 
 /**
- * High-Speed Fallback: Fetches the last known location from cache instantly.
+ * SOS_PRIORITY_OPTIONS: Extremely aggressive timeouts for emergency dispatch.
  */
-const FAST_FIX_OPTIONS: PositionOptions = {
+const SOS_FAST_CACHE: PositionOptions = {
   enableHighAccuracy: false,
-  timeout: 3000,
-  maximumAge: 300000 // 5 minutes cache
+  timeout: 1500,      // 1.5s limit for cached data
+  maximumAge: 600000  // 10 minutes cache acceptable for emergency start
 };
 
-/**
- * High-Precision Lock: Forces fresh satellite coordinates.
- */
-const PRECISION_OPTIONS: PositionOptions = {
+const SOS_HIGH_ACCURACY: PositionOptions = {
   enableHighAccuracy: true,
-  timeout: 10000,
+  timeout: 5000,      // 5s limit for fresh satellite lock
   maximumAge: 0
 };
 
@@ -52,25 +49,26 @@ export function startLocationWatch(
 }
 
 /**
- * Critical SOS Coordinate Fetcher.
- * 1. Instantly tries to grab a cached location (2s timeout).
- * 2. If no cache, waits up to 8s for a fresh precision lock.
- * 3. Guaranteed to resolve with the best available data or fail.
+ * Immediate SOS Coordinate Acquisition.
+ * Priority 1: Instant Cached Location (resolve in < 1.5s).
+ * Priority 2: Fresh satellite lock (resolve in < 5s).
+ * Guaranteed to return coordinates if ANY source is available.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error("No GPS Hardware"));
+      reject(new Error("No GPS Hardware Detected"));
       return;
     }
 
-    let hasResolved = false;
+    let resolved = false;
 
-    // Attempt 1: Fast Fix (Cached)
+    // Fast-path: Try cached location immediately
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        if (!hasResolved) {
-          hasResolved = true;
+        if (!resolved) {
+          resolved = true;
+          console.log("SOS: Using cached coordinates for speed.");
           resolve({
             lat: pos.coords.latitude,
             lng: pos.coords.longitude,
@@ -79,19 +77,18 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
           });
         }
       },
-      () => {
-        console.warn("Fast-fix failed, awaiting precision lock...");
-      },
-      FAST_FIX_OPTIONS
+      () => console.warn("SOS: No cached coordinates found."),
+      SOS_FAST_CACHE
     );
 
-    // Attempt 2: Precision Fix (Fresh) - Runs in parallel, takes precedence if faster or if cache fails
+    // Precision-path: Request fresh lock in parallel
     setTimeout(() => {
-      if (!hasResolved) {
+      if (!resolved) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
-            if (!hasResolved) {
-              hasResolved = true;
+            if (!resolved) {
+              resolved = true;
+              console.log("SOS: High-accuracy satellite lock achieved.");
               resolve({
                 lat: pos.coords.latitude,
                 lng: pos.coords.longitude,
@@ -103,15 +100,15 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
             }
           },
           (err) => {
-            if (!hasResolved) {
-              hasResolved = true;
-              reject(new Error("SOS Fail: No GPS signal available. Check satellite visibility."));
+            if (!resolved) {
+              resolved = true;
+              reject(new Error("SOS ERROR: Satellite link failed. Check your environment."));
             }
           },
-          PRECISION_OPTIONS
+          SOS_HIGH_ACCURACY
         );
       }
-    }, 100); // Tiny offset to give Fast Fix a chance to hit cache first
+    }, 100); 
   });
 }
 
