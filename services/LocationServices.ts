@@ -2,28 +2,14 @@
 import { GuardianCoords } from '../types';
 
 /**
- * Stage 1: Fast Cache Retrieval (resolve in < 1s)
- */
-const CACHE_FETCH_OPTIONS: PositionOptions = {
-  enableHighAccuracy: false,
-  timeout: 1000,
-  maximumAge: 300000 // 5 mins cache
-};
-
-/**
- * Stage 2: Satellite Lock (resolve in < 4s)
- */
-const SATELLITE_LOCK_OPTIONS: PositionOptions = {
-  enableHighAccuracy: true,
-  timeout: 4000,
-  maximumAge: 0
-};
-
-/**
- * Shared coordinates for instant fallback
+ * Strategy: Fast-Path Priority.
+ * We prioritize speed (cached) over precision (fresh) for the first 3 seconds of an emergency.
  */
 let lastCapturedCoords: GuardianCoords | null = null;
 
+/**
+ * Continuous background watch to keep a 'warm' cache.
+ */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
   onError: (message: string) => void
@@ -45,84 +31,78 @@ export function startLocationWatch(
       onUpdate(c);
     },
     (error) => {
-      onError("Satellite Signal Weak");
+      console.warn("Watch stream signal dip:", error.message);
     },
-    { enableHighAccuracy: true, maximumAge: 5000 }
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
   );
 }
 
 /**
- * Robust SOS Coordinate Resolver (Web Implementation of Fused Location strategy).
- * Guaranteed resolution with best-available data or failure after 5 seconds.
+ * Robust SOS Coordinate Resolver.
+ * 1. Immediate memory check.
+ * 2. Rapid browser cache check (< 1s).
+ * 3. Racing fresh lock (3s timeout).
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error("No GPS Hardware"));
+      reject(new Error("No GPS"));
       return;
     }
 
-    let isDone = false;
+    let isResolved = false;
 
-    const finalize = (coords: GuardianCoords, source: string) => {
-      if (isDone) return;
-      // Verification: Ensure coordinates are valid (not 0,0)
-      if (coords.lat === 0 && coords.lng === 0) {
-        console.warn("Rejected invalid 0,0 coordinates from", source);
-        return;
-      }
-      isDone = true;
-      console.log(`SOS Location sourced from: ${source} [${coords.lat}, ${coords.lng}]`);
+    const fastFinish = (coords: GuardianCoords, source: string) => {
+      if (isResolved) return;
+      if (coords.lat === 0 && coords.lng === 0) return;
+      isResolved = true;
+      console.log(`SOS Location sourced from: ${source}`);
       resolve(coords);
     };
 
-    // 1. Immediate check of persistent watch stream
+    // PRIORITY 1: Memory Cache (Immediate)
     if (lastCapturedCoords) {
-      finalize(lastCapturedCoords, "Watch Stream Cache");
+      fastFinish(lastCapturedCoords, "Memory Cache");
     }
 
-    // 2. Try Browser Last Known Position (Instant)
+    // PRIORITY 2: Browser Cached Position (Fast < 1s)
     navigator.geolocation.getCurrentPosition(
-      (pos) => finalize({
+      (pos) => fastFinish({
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
         timestamp: pos.timestamp
-      }, "Browser Last Known"),
-      () => console.warn("Cache fetch failed"),
-      CACHE_FETCH_OPTIONS
+      }, "Browser Cache"),
+      null,
+      { enableHighAccuracy: false, timeout: 1000, maximumAge: 600000 }
     );
 
-    // 3. Try Fresh High Accuracy Satellite Lock
+    // PRIORITY 3: Racing Fresh Lock (Tight 3s limit)
     navigator.geolocation.getCurrentPosition(
-      (pos) => finalize({
+      (pos) => fastFinish({
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
         timestamp: pos.timestamp
-      }, "High Accuracy Satellite Fix"),
+      }, "Fresh High-Accuracy Lock"),
       (err) => {
-        if (!isDone) {
-          if (lastCapturedCoords) {
-            finalize(lastCapturedCoords, "Critical Fallback to Last Known");
-          } else {
-            reject(new Error("Unable to establish GPS link."));
-          }
+        if (!isResolved) {
+          // If fresh lock fails and we still haven't resolved anything, 
+          // use the absolute best available or fallback to a default if truly desperate.
+          if (lastCapturedCoords) fastFinish(lastCapturedCoords, "Emergency Fallback");
+          else reject(new Error("Signal Lost"));
         }
       },
-      SATELLITE_LOCK_OPTIONS
+      { enableHighAccuracy: true, timeout: 3000, maximumAge: 0 }
     );
 
-    // 4. Force Resolve Timeout (Safety Net)
+    // Safety net: If after 3.5s nothing has resolved, force the memory cache or throw.
     setTimeout(() => {
-      if (!isDone) {
-        if (lastCapturedCoords) {
-          finalize(lastCapturedCoords, "Timeout Fallback");
-        } else {
-          reject(new Error("GPS Link Timeout."));
-        }
+      if (!isResolved) {
+        if (lastCapturedCoords) fastFinish(lastCapturedCoords, "Timeout Force Fallback");
+        else reject(new Error("GPS Dead"));
       }
-    }, 5000);
+    }, 3500);
   });
 }
 

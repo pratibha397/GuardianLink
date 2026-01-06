@@ -44,26 +44,17 @@ const firebaseConfig = {
   measurementId: process.env.FIREBASE_MEASUREMENT_ID || ""
 };
 
-// Check if we have enough to actually run Firebase
+// Check configuration
 export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
 
-// Initialize Firebase only once
-let app: FirebaseApp;
-if (getApps().length === 0) {
-  app = initializeApp(firebaseConfig);
-} else {
-  app = getApp();
-}
+// Strictly ordered initialization
+const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Ensure components are initialized correctly
+// Export initialized services
 export const auth: Auth = getAuth(app);
-
-// Initialize Firestore with explicit settings to avoid some "offline" issues 
-// and handle multi-tab/persistence properly
 export const db: Firestore = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 });
-
 export const rtdb: Database = getDatabase(app);
 
 // Auth Exports
