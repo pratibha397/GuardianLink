@@ -2,27 +2,25 @@
 import { GuardianCoords } from '../types';
 
 /**
- * Standard Geolocation Options.
- * emulates PRIORITY_HIGH_ACCURACY for fresh satellite data.
+ * Priority 1: High Accuracy GPS (Satellite Lock)
  */
 const HIGH_ACCURACY_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
-  timeout: 10000,   // Strict 10s window for SOS dispatch
+  timeout: 10000,   // 10s for fresh lock
   maximumAge: 0     // No caching
 };
 
 /**
- * Fast Fallback Options.
- * Pulls the last known position from the browser cache immediately.
+ * Priority 2: Balanced/Cached Fallback
  */
-const CACHED_FALLBACK_OPTIONS: PositionOptions = {
+const BALANCED_OPTIONS: PositionOptions = {
   enableHighAccuracy: false,
-  timeout: 2000,
-  maximumAge: 600000 // 10 minutes cache
+  timeout: 5000,
+  maximumAge: 30000 // 30s cache
 };
 
 /**
- * Persistent Watcher for Real-Time UI Updates.
+ * Initiates a persistent watch for the UI telemetry.
  */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
@@ -54,9 +52,8 @@ export function startLocationWatch(
 }
 
 /**
- * Robust SOS Coordinate Lock.
- * Priority 1: Attempts fresh high-accuracy GPS fix (10s timeout).
- * Priority 2: Falls back to last known location if GPS fails/times out.
+ * Robust SOS Coordinate Acquisition Chain.
+ * Ensures a valid fix is obtained before proceeding.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
@@ -65,28 +62,37 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
       return;
     }
 
-    // Try High Accuracy first
+    // Stage 1: Try High Accuracy (GPS Lock)
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-        speed: pos.coords.speed,
-        heading: pos.coords.heading,
-        timestamp: pos.timestamp
-      }),
+      (pos) => {
+        if (pos.coords.latitude && pos.coords.longitude) {
+          resolve({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            speed: pos.coords.speed,
+            heading: pos.coords.heading,
+            timestamp: pos.timestamp
+          });
+        } else {
+          reject(new Error("Invalid coordinates received."));
+        }
+      },
       (err) => {
-        console.warn("High-accuracy fix failed, attempting cached fallback...", err.message);
-        // Fallback to cached location
+        console.warn("GPS lock failed, trying balanced fallback...", err.message);
+        
+        // Stage 2: Balanced/Cached Fallback
         navigator.geolocation.getCurrentPosition(
-          (fallbackPos) => resolve({
-            lat: fallbackPos.coords.latitude,
-            lng: fallbackPos.coords.longitude,
-            accuracy: fallbackPos.coords.accuracy,
-            timestamp: fallbackPos.timestamp
-          }),
-          () => reject(new Error("Signal timeout: Unable to establish location lock.")),
-          CACHED_FALLBACK_OPTIONS
+          (fallbackPos) => {
+            resolve({
+              lat: fallbackPos.coords.latitude,
+              lng: fallbackPos.coords.longitude,
+              accuracy: fallbackPos.coords.accuracy,
+              timestamp: fallbackPos.timestamp
+            });
+          },
+          () => reject(new Error("GPS signal timeout: Unable to establish emergency lock.")),
+          BALANCED_OPTIONS
         );
       },
       HIGH_ACCURACY_OPTIONS
