@@ -30,58 +30,65 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
   const [text, setText] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Derive Chat Path
-  // CRITICAL: Must be 100% deterministic and case-insensitive so both users arrive at the same key.
+  /**
+   * Generates a unique, deterministic ID for the conversation.
+   * Both User A and User B will generate the exact same ID.
+   */
   const getChatPath = (contact: EmergencyContact) => {
+    // If we are the victim in an SOS, use the dedicated Alert node
     if (activeAlertId) return `alerts/${activeAlertId}`;
     
-    // Normalize emails to lowercase for comparison and sorting
-    const email1 = user.email.trim().toLowerCase();
-    const email2 = contact.email.trim().toLowerCase();
+    // Normalize emails to avoid case-sensitivity issues
+    const email1 = user.email.toLowerCase().trim();
+    const email2 = contact.email.toLowerCase().trim();
     
-    const sortedIds = [email1, email2].sort();
+    // Sort alphabetically so the order is consistent for both users
+    const sortedEmails = [email1, email2].sort();
     
-    // Sanitize path: replace forbidden characters (., #, $, [, ], @)
-    const sanitize = (email: string) => email.replace(/[\.\@\#\$\/\[\]]/g, '_');
+    // Sanitize characters that are forbidden in Firebase RTDB paths
+    // We replace dots with underscores to match the Security Rules logic
+    const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
     
-    const chatKey = `${sanitize(sortedIds[0])}__${sanitize(sortedIds[1])}`;
-    return `direct_chats/${chatKey}`;
+    const combinedId = `${sanitize(sortedEmails[0])}__${sanitize(sortedEmails[1])}`;
+    return `direct_chats/${combinedId}`;
   };
 
+  // Real-time message synchronization
   useEffect(() => {
     if (selectedContact) {
       const path = getChatPath(selectedContact);
-      const chatRef = ref(rtdb, `${path}/updates`);
+      // Listen to the 'updates' sub-node where messages are stored
+      const messagesRef = ref(rtdb, `${path}/updates`);
       
-      // Real-time listener: this triggers every time a new message is pushed to the database
-      const unsubscribe = onValue(chatRef, (snapshot: DataSnapshot) => {
+      const unsubscribe = onValue(messagesRef, (snapshot: DataSnapshot) => {
         const data = snapshot.val();
         if (data) {
-          // Firebase RTDB returns an object with random keys; we convert to array and sort by time
-          const msgList = Object.keys(data).map(key => ({
+          // Convert the Firebase object of messages into a sorted array
+          const msgArray = Object.keys(data).map(key => ({
             ...data[key],
-            id: key // Use the push ID as the message ID
+            id: key
           }));
-          const sorted = msgList.sort((a: any, b: any) => a.timestamp - b.timestamp) as ChatMessage[];
+          
+          // Sort by timestamp to ensure chronological order
+          const sorted = msgArray.sort((a: any, b: any) => a.timestamp - b.timestamp) as ChatMessage[];
           setMessages(sorted);
         } else {
           setMessages([]);
         }
       }, (error) => {
-        console.error("RTDB Listener Error:", error);
+        console.error("Firebase Realtime Listener Error:", error);
       });
 
+      // Cleanup listener on unmount or when changing contact
       return () => unsubscribe();
     } else {
       setMessages([]);
     }
   }, [selectedContact, activeAlertId, user.email]);
 
-  // Handle auto-scroll whenever messages change
+  // Handle auto-scroll to bottom on new messages
   useEffect(() => {
-    if (messages.length > 0) {
-      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const sendMessage = async (e: React.FormEvent) => {
@@ -90,25 +97,24 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
     if (!selectedContact || !messageText) return;
 
     const path = getChatPath(selectedContact);
-    const msg: ChatMessage = {
+    const newMessage: ChatMessage = {
       id: `msg_${Date.now()}`,
       senderName: user.name,
-      senderEmail: user.email.toLowerCase(),
+      senderEmail: user.email.toLowerCase().trim(),
       text: messageText,
       timestamp: Date.now()
     };
 
     try {
-      setText(''); // Optimistically clear input
-      await push(ref(rtdb, `${path}/updates`), msg);
-    } catch (e) { 
-      console.error("Send failed:", e);
-      // Optional: restore text if send fails
-      setText(messageText);
+      setText(''); // Clear input immediately for better UX
+      await push(ref(rtdb, `${path}/updates`), newMessage);
+    } catch (err) { 
+      console.error("Failed to transmit message:", err);
+      setText(messageText); // Restore text on failure
     }
   };
 
-  // 1. INBOX LIST VIEW
+  // 1. INBOX VIEW (List of Guardians)
   if (!selectedContact) {
     return (
       <div className="flex flex-col h-full animate-in fade-in duration-500">
@@ -171,10 +177,9 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
     );
   }
 
-  // 2. CHAT CONVERSATION VIEW
+  // 2. CHAT VIEW (Selected Conversation)
   return (
     <div className="fixed inset-0 z-[60] bg-[#020617] flex flex-col animate-in slide-in-from-right duration-300">
-      {/* Header */}
       <header className="p-6 bg-[#020617]/90 backdrop-blur-xl flex items-center justify-between border-b border-white/5 sticky top-0 z-10">
         <div className="flex items-center gap-4">
           <button onClick={() => setSelectedContact(null)} className="p-2 -ml-2 text-slate-400 hover:text-white transition-colors">
@@ -199,8 +204,7 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
         </div>
       </header>
 
-      {/* Message Feed */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')]">
+      <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
         {activeAlertId && (
           <div className="flex justify-center mb-8">
             <div className="bg-red-600/20 border border-red-500/40 px-6 py-2 rounded-full text-red-500 text-[10px] font-black uppercase tracking-widest shadow-lg flex items-center gap-2">
@@ -216,7 +220,7 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
           </div>
         ) : (
           messages.map((msg, idx) => {
-            const isMe = msg.senderEmail.toLowerCase() === user.email.toLowerCase();
+            const isMe = msg.senderEmail.toLowerCase().trim() === user.email.toLowerCase().trim();
             
             if (msg.type === 'location') {
               return (
@@ -254,7 +258,6 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
         <div ref={chatEndRef} className="h-4" />
       </div>
 
-      {/* Input Area */}
       <div className="p-6 bg-[#020617]/95 backdrop-blur-md border-t border-white/5 pb-10">
         <form onSubmit={sendMessage} className="flex gap-3 items-center">
           <div className="flex-1 relative">
