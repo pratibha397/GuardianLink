@@ -1,6 +1,7 @@
 
-import { AlertCircle, CheckCircle2, Mic, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
+// Added Wifi to the imports from lucide-react to fix the error on line 135
+import { AlertCircle, CheckCircle2, Mic, Search, ShieldCheck, Trash2, UserPlus, Wifi } from 'lucide-react';
 import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
 
@@ -12,12 +13,11 @@ interface SettingsPanelProps {
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings }) => {
   const [newContact, setNewContact] = useState({ name: '', email: '' });
   const [isSearching, setIsSearching] = useState(false);
-  const [lookupResult, setLookupResult] = useState<'found' | 'not_found' | null>(null);
+  const [lookupResult, setLookupResult] = useState<'found' | 'not_found' | 'error' | null>(null);
 
   const checkUserExists = async (inputEmail: string) => {
     const normalized = inputEmail.trim().toLowerCase();
     
-    // Only search if it looks like a valid email
     if (normalized.length < 5 || !normalized.includes('@')) {
       setLookupResult(null);
       return;
@@ -27,23 +27,26 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
     setLookupResult(null);
 
     try {
-      // Lookup the user by their normalized email in the 'users' collection
-      // Document IDs are consistent because AuthScreen lowercases them
+      // Use getDoc from Firestore. Document IDs are consistent because AuthScreen lowercases them.
       const userRef = doc(db, "users", normalized);
       const userSnap = await getDoc(userRef);
       
       if (userSnap.exists()) {
         setLookupResult('found');
-        // Pre-fill the name if found
         if (!newContact.name.trim()) {
            setNewContact(prev => ({ ...prev, name: userSnap.data().name }));
         }
       } else {
         setLookupResult('not_found');
       }
-    } catch (error) {
-      console.warn("User lookup failed", error);
-      setLookupResult('not_found');
+    } catch (error: any) {
+      console.error("User lookup failed:", error);
+      // Handle the offline error gracefully
+      if (error.message?.includes('offline')) {
+        setLookupResult('error');
+      } else {
+        setLookupResult('not_found');
+      }
     } finally {
       setIsSearching(false);
     }
@@ -56,7 +59,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       } else {
         setLookupResult(null);
       }
-    }, 800);
+    }, 1000); // Slightly longer debounce for reliability
     return () => clearTimeout(timer);
   }, [newContact.email]);
 
@@ -74,7 +77,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       
       const currentContacts = Array.isArray(settings.contacts) ? settings.contacts : [];
       
-      // Prevent duplicates
       if (currentContacts.some(c => c.email === cleanEmail)) {
         setNewContact({ name: '', email: '' });
         setLookupResult(null);
@@ -84,7 +86,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       const updatedContacts = [...currentContacts, contact];
       updateSettings({ contacts: updatedContacts });
       
-      // Reset input
       setNewContact({ name: '', email: '' });
       setLookupResult(null);
     }
@@ -126,12 +127,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
              <input 
               type="email" placeholder="Guardian Email" value={newContact.email}
               onChange={(e) => setNewContact(p => ({...p, email: e.target.value}))}
-              className={`w-full bg-slate-950 border rounded-2xl py-4 px-6 text-xs text-white font-bold pr-14 outline-none transition-colors ${lookupResult === 'found' ? 'border-green-500/50' : lookupResult === 'not_found' ? 'border-red-500/50' : 'border-white/5 focus:border-blue-500'}`}
+              className={`w-full bg-slate-950 border rounded-2xl py-4 px-6 text-xs text-white font-bold pr-14 outline-none transition-colors ${lookupResult === 'found' ? 'border-green-500/50' : (lookupResult === 'not_found' || lookupResult === 'error') ? 'border-red-500/50' : 'border-white/5 focus:border-blue-500'}`}
             />
             <div className="absolute right-5 top-1/2 -translate-y-1/2">
               {isSearching ? <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /> : 
                lookupResult === 'found' ? <CheckCircle2 size={20} className="text-green-500" /> :
-               lookupResult === 'not_found' ? <AlertCircle size={20} className="text-red-500" /> : <Search size={20} className="text-slate-800" />}
+               lookupResult === 'not_found' ? <AlertCircle size={20} className="text-red-500" /> : 
+               lookupResult === 'error' ? <Wifi size={20} className="text-amber-500 animate-pulse" /> :
+               <Search size={20} className="text-slate-800" />}
             </div>
           </div>
 
@@ -151,6 +154,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           
           {lookupResult === 'not_found' && newContact.email && !isSearching && (
             <p className="text-[10px] text-red-400 font-bold uppercase text-center">User not found. They will receive SMS only.</p>
+          )}
+          {lookupResult === 'error' && (
+             <p className="text-[10px] text-amber-500 font-bold uppercase text-center italic">
+               Network unstable. Checking local cache...
+             </p>
           )}
           {lookupResult === 'found' && (
              <p className="text-[10px] text-green-500 font-bold uppercase text-center flex items-center justify-center gap-2 italic">

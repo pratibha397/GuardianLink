@@ -25,7 +25,9 @@ import {
   doc,
   getDoc,
   getDocs,
-  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   query,
   setDoc,
   updateDoc,
@@ -55,7 +57,12 @@ if (getApps().length === 0) {
 
 // Ensure components are initialized and registered correctly
 export const auth: Auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
+
+// Initialize Firestore with explicit settings to avoid some "offline" issues in specific browsers
+export const db: Firestore = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
+
 export const rtdb: Database = getDatabase(app);
 
 // Auth Exports
