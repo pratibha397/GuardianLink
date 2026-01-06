@@ -41,7 +41,35 @@ const Dashboard: React.FC<DashboardProps> = ({
   const watchIdRef = useRef<number>(-1);
   const recognitionRef = useRef<any>(null);
 
-  // Helper for location sharing
+  // Helper for direct location dispatch to primary guardian
+  const sendLocationDirect = async (currentCoords: GuardianCoords | null) => {
+    if (!currentCoords || !settings.primaryGuardianEmail) return;
+
+    // Use deterministic path generation
+    const email1 = user.email.toLowerCase().trim();
+    const email2 = settings.primaryGuardianEmail.toLowerCase().trim();
+    const sorted = [email1, email2].sort();
+    const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
+    const path = `direct_chats/${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
+
+    const msg: ChatMessage = {
+      id: `panic_loc_${Date.now()}`,
+      type: 'location',
+      senderName: user.name,
+      senderEmail: user.email,
+      text: '🚨 VOICE TRIGGERED EMERGENCY LOCATION 🚨',
+      lat: currentCoords.lat,
+      lng: currentCoords.lng,
+      timestamp: Date.now()
+    };
+
+    try {
+      await push(ref(rtdb, `${path}/updates`), msg);
+    } catch (e) {
+      console.error("Direct alert dispatch failed:", e);
+    }
+  };
+
   const pushLocationToChat = async (targetPath: string, currentCoords: GuardianCoords | null) => {
     if (!currentCoords) return;
     const msg: ChatMessage = {
@@ -59,9 +87,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (e) { console.error(e); }
   };
 
-  // GPS & Voice Trigger Logic
+  // GPS & Enhanced Voice Trigger Logic
   useEffect(() => {
-    // Start watching location immediately on dashboard mount for "Live Location" display
     watchIdRef.current = startLocationWatch(
       (c: GuardianCoords) => {
         setCoords(c);
@@ -72,17 +99,39 @@ const Dashboard: React.FC<DashboardProps> = ({
       (err: string) => setErrorMsg(err)
     );
 
-    // Re-initialize voice recognition if listening state changes
     if (settings.isListening) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR && !recognitionRef.current) {
         const recognition = new SR();
         recognition.continuous = true;
+        recognition.interimResults = true; // Crucial for faster detection
+        recognition.lang = ''; // Let the browser handle auto-detection where possible
+        
         recognition.onresult = (e: any) => {
-          const t = Array.from(e.results).map((r: any) => r[0].transcript).join('').toLowerCase();
-          if (t.includes(settings.triggerPhrase.toLowerCase())) triggerSOS("Voice Alert");
+          const results = Array.from(e.results);
+          // Aggregate all interim and final results into a single scan string
+          const transcript = results
+            .map((r: any) => r[0].transcript)
+            .join(' ')
+            .toLowerCase();
+
+          const trigger = settings.triggerPhrase.toLowerCase();
+          
+          if (transcript.includes(trigger)) {
+            triggerSOS(`Voice Triggered: "${trigger}"`);
+            // Clear recognition to prevent multiple triggers in one breath
+            recognition.stop();
+          }
         };
-        recognition.start();
+
+        recognition.onend = () => {
+          // Auto-restart to maintain persistent mesh listening
+          if (settings.isListening && !externalActiveAlertId) {
+            try { recognition.start(); } catch(e) {}
+          }
+        };
+
+        try { recognition.start(); } catch(e) {}
         recognitionRef.current = recognition;
       }
     } else if (recognitionRef.current) {
@@ -94,7 +143,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (watchIdRef.current !== -1) stopLocationWatch(watchIdRef.current);
       if (recognitionRef.current) recognitionRef.current.stop();
     };
-  }, [settings.isListening, externalActiveAlertId]);
+  }, [settings.isListening, externalActiveAlertId, settings.triggerPhrase]);
 
   const triggerSOS = async (reason: string) => {
     if (externalActiveAlertId) return;
@@ -105,10 +154,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       isLive: true, recipients: settings.contacts.map(c => c.email)
     };
     try {
+      // 1. Log to global alerts node
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
       setTimerActive(false);
-      if (coords) pushLocationToChat(`alerts/${alertId}`, coords);
+
+      // 2. Push to emergency war room chat
+      if (coords) {
+        await pushLocationToChat(`alerts/${alertId}`, coords);
+        // 3. Automated targeted alert to the Primary Guardian
+        if (settings.primaryGuardianEmail) {
+          await sendLocationDirect(coords);
+        }
+      }
     } catch (e) { setErrorMsg("SOS Link Failed."); }
   };
 
@@ -194,7 +252,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* NEW: Live Telemetry Widget */}
       <div className="glass p-5 rounded-[2.5rem] border border-white/5 relative overflow-hidden shadow-2xl">
         <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
            <MapPin size={120} />

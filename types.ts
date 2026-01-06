@@ -37,6 +37,7 @@ export interface AppSettings {
   checkInDuration: number; // minutes
   contacts: EmergencyContact[];
   isListening: boolean;
+  primaryGuardianEmail?: string; // Target for automated danger alerts
 }
 
 export interface SafeSpot {

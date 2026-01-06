@@ -1,5 +1,5 @@
 
-import { AlertCircle, CheckCircle2, Mic, Search, ShieldCheck, Trash2, UserPlus, Wifi } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Mic, Search, Star, Trash2, UserPlus, Wifi } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
@@ -26,8 +26,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
     setLookupResult(null);
 
     try {
-      // Use Firestore to find user. Every Aegis user is indexed in 'users' collection 
-      // by their lowercase email as the document ID.
       const userRef = doc(db, "users", normalized);
       const userSnap = await getDoc(userRef);
       
@@ -41,7 +39,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       }
     } catch (error: any) {
       console.error("Discovery error:", error);
-      // If we hit an 'offline' or transport error, notify the UI
       if (error.message?.includes('offline') || error.code === 'unavailable') {
         setLookupResult('error');
       } else {
@@ -83,15 +80,28 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
         return;
       }
 
-      updateSettings({ contacts: [...currentContacts, contact] });
+      // Automatically set as primary if it's the first contact
+      const isFirst = currentContacts.length === 0;
+      updateSettings({ 
+        contacts: [...currentContacts, contact],
+        primaryGuardianEmail: isFirst ? cleanEmail : settings.primaryGuardianEmail 
+      });
       setNewContact({ name: '', email: '' });
       setLookupResult(null);
     }
   };
 
-  const removeContact = (id: string) => {
+  const removeContact = (id: string, email: string) => {
     const currentContacts = Array.isArray(settings.contacts) ? settings.contacts : [];
-    updateSettings({ contacts: currentContacts.filter((c) => c.id !== id) });
+    const isPrimary = settings.primaryGuardianEmail === email;
+    updateSettings({ 
+      contacts: currentContacts.filter((c) => c.id !== id),
+      primaryGuardianEmail: isPrimary ? undefined : settings.primaryGuardianEmail
+    });
+  };
+
+  const setAsPrimary = (email: string) => {
+    updateSettings({ primaryGuardianEmail: email });
   };
 
   return (
@@ -109,6 +119,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
             className="w-full bg-slate-900/50 border border-white/5 rounded-2xl px-6 py-5 text-sm font-black text-white focus:border-blue-500 outline-none"
             placeholder="e.g. Guardian, help me"
           />
+          <p className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mt-4 px-2">
+            The Aegis engine listens in 80+ languages. Detection is automatic.
+          </p>
         </div>
       </section>
 
@@ -147,46 +160,46 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           >
             Authorize Mesh Node
           </button>
-          
-          {lookupResult === 'not_found' && newContact.email && !isSearching && (
-            <p className="text-[10px] text-red-400 font-bold uppercase text-center">User not found in Aegis network.</p>
-          )}
-          {lookupResult === 'error' && (
-             <p className="text-[10px] text-amber-500 font-bold uppercase text-center italic">
-               Network issue. Please check your connection.
-             </p>
-          )}
-          {lookupResult === 'found' && (
-             <p className="text-[10px] text-green-500 font-bold uppercase text-center flex items-center justify-center gap-2 italic">
-               <ShieldCheck size={12} /> Verified Aegis Account
-             </p>
-          )}
         </div>
 
         <div className="space-y-4">
-          {(settings.contacts || []).map(c => (
-            <div key={c.id} className="bg-slate-900/40 border border-white/5 p-6 rounded-[2.5rem] flex items-center justify-between shadow-lg group">
-              <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg uppercase ${c.isRegisteredUser ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
-                  {c.name ? c.name[0] : '?'}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h5 className="text-[14px] font-black text-white italic">{c.name}</h5>
-                    {c.isRegisteredUser && (
-                      <span className="bg-green-500/10 text-green-500 text-[7px] font-black uppercase px-2 py-0.5 rounded-full flex items-center gap-1 border border-green-500/20">
-                        <ShieldCheck size={10} /> Verified
-                      </span>
-                    )}
+          {(settings.contacts || []).map(c => {
+            const isPrimary = settings.primaryGuardianEmail === c.email;
+            return (
+              <div key={c.id} className={`bg-slate-900/40 border p-6 rounded-[2.5rem] flex items-center justify-between shadow-lg group transition-all ${isPrimary ? 'border-blue-500/30 ring-1 ring-blue-500/20' : 'border-white/5'}`}>
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg uppercase transition-colors ${c.isRegisteredUser ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                    {c.name ? c.name[0] : '?'}
                   </div>
-                  <p className="text-[9px] text-slate-600 font-bold uppercase tracking-widest mt-1">{c.email}</p>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h5 className="text-[14px] font-black text-white italic">{c.name}</h5>
+                      {isPrimary && (
+                        <span className="bg-blue-600/20 text-blue-400 text-[7px] font-black uppercase px-2 py-0.5 rounded-full flex items-center gap-1 border border-blue-500/30">
+                          <Star size={8} className="fill-blue-400" /> Primary
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[9px] text-slate-600 font-bold uppercase tracking-widest mt-1">{c.email}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!isPrimary && (
+                    <button 
+                      onClick={() => setAsPrimary(c.email)}
+                      className="text-slate-700 hover:text-blue-500 transition-colors p-3 hover:scale-110 transition-transform"
+                      title="Set as Primary Emergency Contact"
+                    >
+                      <Star size={18} />
+                    </button>
+                  )}
+                  <button onClick={() => removeContact(c.id, c.email)} className="text-slate-700 hover:text-red-500 transition-colors p-3 group-hover:scale-110 transition-transform">
+                    <Trash2 size={20} />
+                  </button>
                 </div>
               </div>
-              <button onClick={() => removeContact(c.id)} className="text-slate-700 hover:text-red-500 transition-colors p-3 group-hover:scale-110 transition-transform">
-                <Trash2 size={20} />
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
     </div>
