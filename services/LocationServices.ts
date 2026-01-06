@@ -3,8 +3,8 @@ import { GuardianCoords } from '../types';
 
 /**
  * Initiates a high-precision location watch.
- * Enforces PRIORITY_HIGH_ACCURACY equivalents by disabling caching and 
- * setting aggressive hardware timeouts.
+ * Uses enableHighAccuracy: true to force GPS satellite usage over network triangulation.
+ * Sets maximumAge: 0 to bypass cached location data.
  */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
@@ -15,8 +15,6 @@ export function startLocationWatch(
     return -1;
   }
 
-  // FORCE FRESH COORDINATES: maximumAge: 0 ensures we do not use a cached position
-  // enableHighAccuracy: true hints the device to use GPS satellites over network/WiFi trianglulation
   const options: PositionOptions = {
     enableHighAccuracy: true,
     timeout: 10000, 
@@ -41,10 +39,10 @@ export function startLocationWatch(
           msg = "Location Access Denied. Check System Permissions.";
           break;
         case error.POSITION_UNAVAILABLE:
-          msg = "Satellite Signal Lost. Searching...";
+          msg = "Satellite Signal Lost. Check GPS settings.";
           break;
         case error.TIMEOUT:
-          msg = "GPS Acquisition Timeout. Precision restricted.";
+          msg = "GPS Acquisition Timeout. Retrying...";
           break;
       }
       onError(msg);
@@ -56,8 +54,7 @@ export function startLocationWatch(
 }
 
 /**
- * Single-shot high-accuracy position fetch.
- * Used during emergency triggers to lock the most precise coordinate available.
+ * Single-shot fresh coordinate capture for emergency events.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
@@ -76,7 +73,11 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
         timestamp: pos.timestamp
       }),
       (err) => reject(err),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      { 
+        enableHighAccuracy: true, 
+        timeout: 5000, 
+        maximumAge: 0 
+      }
     );
   });
 }

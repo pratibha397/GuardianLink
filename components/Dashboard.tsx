@@ -5,7 +5,6 @@ import {
   ChevronRight,
   ExternalLink,
   Globe,
-  MapPin,
   Navigation,
   Power,
   ShieldAlert,
@@ -32,8 +31,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   onAlert, externalActiveAlertId, onClearAlert 
 }) => {
   const [coords, setCoords] = useState<GuardianCoords | null>(null);
-  const [timerActive, setTimerActive] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(0);
   const [safeSpots, setSafeSpots] = useState<SafeSpot[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -42,7 +39,31 @@ const Dashboard: React.FC<DashboardProps> = ({
   const recognitionRef = useRef<any>(null);
   const isTriggeringRef = useRef(false);
 
-  // CRITICAL FIX: Send location directly using fresh coordinates and deterministic path
+  /**
+   * Explicitly requests microphone and location permissions to prevent silent failures.
+   */
+  const requestCorePermissions = async (): Promise<boolean> => {
+    try {
+      // Microphone request
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Location request (explicitly using small timeout to force a prompt)
+      return new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          () => resolve(true),
+          (err) => {
+            console.warn("Location prompt result:", err);
+            resolve(err.code !== err.PERMISSION_DENIED);
+          },
+          { enableHighAccuracy: true, timeout: 5000 }
+        );
+      });
+    } catch (e) {
+      console.warn("Permission request failed:", e);
+      return false;
+    }
+  };
+
   const sendLocationDirect = async (preciseCoords: GuardianCoords) => {
     if (!settings.primaryGuardianEmail) return;
 
@@ -57,7 +78,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       type: 'location',
       senderName: user.name,
       senderEmail: user.email,
-      text: '🚨 PANIC PHRASE DETECTED: HIGH-ACCURACY GPS LOCK 🚨',
+      text: '🚨 PANIC DETECTED: AUTO-LOC DISPATCHED 🚨',
       lat: preciseCoords.lat,
       lng: preciseCoords.lng,
       timestamp: Date.now()
@@ -66,7 +87,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       await push(ref(rtdb, `${path}/updates`), msg);
     } catch (e) {
-      console.error("Critical: Direct alert dispatch failed!", e);
+      console.error("Direct alert dispatch failed!", e);
     }
   };
 
@@ -76,7 +97,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       type: 'location',
       senderName: user.name,
       senderEmail: user.email,
-      text: '📍 Emergency GPS Broadcaster Active.',
+      text: '📍 Emergency GPS Tracking Active.',
       lat: currentCoords.lat,
       lng: currentCoords.lng,
       timestamp: Date.now()
@@ -86,9 +107,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (e) { console.error(e); }
   };
 
-  // REWROTE: Enhanced Voice Recognition & GPS Watch
+  // Main system loop for GPS and Voice Recognition
   useEffect(() => {
-    // Persistent GPS Watch for UI
+    // Start standard GPS watch
     watchIdRef.current = startLocationWatch(
       (c: GuardianCoords) => {
         setCoords(c);
@@ -99,51 +120,53 @@ const Dashboard: React.FC<DashboardProps> = ({
       (err: string) => setErrorMsg(err)
     );
 
-    // Multilingual Voice Detection
+    // Initialize Speech Recognition Engine
     if (settings.isListening && !externalActiveAlertId) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR) {
         const recognition = new SR();
         recognition.continuous = true;
         recognition.interimResults = true;
-        // Lang is left unset to utilize browser's automatic language detection
-        
+        recognition.lang = ''; // Let browser auto-detect language
+
         recognition.onresult = (e: any) => {
           if (isTriggeringRef.current) return;
-
-          const results = Array.from(e.results);
-          const transcript = results
+          
+          const transcript = Array.from(e.results)
             .map((r: any) => r[0].transcript)
-            .join(' ')
-            .toLowerCase();
+            .join(' ').toLowerCase();
 
           const trigger = settings.triggerPhrase.toLowerCase().trim();
-          
           if (transcript.includes(trigger)) {
             isTriggeringRef.current = true;
-            triggerSOS(`Voice Triggered: "${trigger}"`);
+            triggerSOS(`Voice Activated: "${trigger}"`);
             recognition.stop();
           }
         };
 
         recognition.onend = () => {
-          // Robust auto-restart mechanism
+          // Robust auto-restart if still listening and not in emergency
           if (settings.isListening && !externalActiveAlertId && !isTriggeringRef.current) {
-            try { recognition.start(); } catch(e) {}
+            try { recognition.start(); } catch(e) { console.warn("Recognition restart failed", e); }
           }
         };
 
-        recognition.onerror = (err: any) => {
-          console.error("Speech Engine Error:", err);
-          if (err.error === 'not-allowed') {
-            setErrorMsg("Microphone Access Required for Panic Detection.");
+        recognition.onerror = (e: any) => {
+          console.error("Voice Listener Error:", e.error);
+          if (e.error === 'not-allowed') {
+            setErrorMsg("Microphone permission denied.");
             updateSettings({ isListening: false });
           }
         };
 
-        try { recognition.start(); } catch(e) {}
-        recognitionRef.current = recognition;
+        try { 
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch(e) { console.error("Could not start recognition engine", e); }
       }
+    } else if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
 
     return () => {
@@ -152,53 +175,70 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
   }, [settings.isListening, externalActiveAlertId, settings.triggerPhrase]);
 
-  // CRITICAL FIX: Trigger Logic with immediate high-accuracy capture
+  /**
+   * Dispatches emergency alert. Force-fetches fresh GPS signal.
+   */
   const triggerSOS = async (reason: string) => {
     if (externalActiveAlertId) return;
 
-    // 1. Get the freshest possible position IMMEDIATELY
+    // Force high-accuracy fresh GPS lock
     let finalCoords = coords;
     try {
       const fresh = await getPreciseCurrentPosition();
       finalCoords = fresh;
       setCoords(fresh);
     } catch (e) {
-      console.warn("Could not get fresh fix, using latest cached signal", e);
+      console.warn("Could not get fresh fix, falling back to last signal.", e);
     }
 
     const alertId = `alert_${user.id}_${Date.now()}`;
     const log: AlertLog = {
-      id: alertId, senderEmail: user.email, senderName: user.name,
-      timestamp: Date.now(), location: finalCoords, message: reason,
-      isLive: true, recipients: settings.contacts.map(c => c.email)
+      id: alertId, 
+      senderEmail: user.email, 
+      senderName: user.name,
+      timestamp: Date.now(), 
+      location: finalCoords, 
+      message: reason,
+      isLive: true, 
+      recipients: (settings.contacts || []).map(c => c.email)
     };
 
     try {
-      // 2. Alert Global Registry
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
-      setTimerActive(false);
-
+      
       if (finalCoords) {
-        // 3. Update War Room
         await pushLocationToChat(`alerts/${alertId}`, finalCoords);
-        // 4. Force immediate direct message to Primary Guardian
         if (settings.primaryGuardianEmail) {
           await sendLocationDirect(finalCoords);
         }
       }
     } catch (e) { 
-      setErrorMsg("SOS Protocol Failed to Sync."); 
+      setErrorMsg("Alert sync failed. Verify internet connection."); 
       isTriggeringRef.current = false;
     }
   };
 
-  const toggleGuard = () => {
+  const toggleGuard = async () => {
+    if (!settings.isListening) {
+      const granted = await requestCorePermissions();
+      if (!granted) {
+        setErrorMsg("Safety features require GPS and Microphone access.");
+        return;
+      }
+    }
     updateSettings({ isListening: !settings.isListening });
   };
 
+  /**
+   * Scans for safe zones using Gemini grounding. 
+   * Handled with silent fallbacks to prevent Dashboard crashes.
+   */
   const findSafeSpots = async () => {
-    if (!coords) return;
+    if (!coords) {
+      setErrorMsg("GPS lock required for safety scan.");
+      return;
+    }
     setIsSearching(true);
     setErrorMsg(null);
     try {
@@ -223,11 +263,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         }));
 
       setSafeSpots(extractedSpots.length > 0 ? extractedSpots : [
-        { name: "Police Station", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` }, 
-        { name: "Hospital", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` }
+        { name: "Police Node", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` }, 
+        { name: "Medical Node", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` }
       ]);
     } catch (err) {
-      setErrorMsg("Failed to scan for safety nodes.");
+      // SILENT FALLBACK to prevent blocking the UI
+      console.warn("Safety node scan interrupted. Using standard GPS results.");
+      setSafeSpots([
+        { name: "Nearest Police", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` },
+        { name: "Nearest Hospital", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` }
+      ]);
     } finally { setIsSearching(false); }
   };
 
@@ -238,14 +283,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           <ShieldAlert size={60} className="text-white" />
         </div>
         <h2 className="text-3xl font-black uppercase text-white italic tracking-tighter">Emergency Alert Live</h2>
-        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs max-w-xs">Your coordinates are being broadcast. Open the Messenger tab to talk to your guardians.</p>
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs max-w-xs">Broadcasting coordinates to guardians. Messenger War Room open.</p>
         
         <div className="mt-10 p-6 glass rounded-[2.5rem] w-full border-red-500/20">
           <div className="flex items-center gap-4 text-left">
              <Activity className="text-red-500" />
              <div>
                <p className="text-[10px] font-black uppercase text-slate-500">Broadcasting To</p>
-               <p className="text-sm font-bold text-white">{settings.contacts.length} Safety Guardians</p>
+               <p className="text-sm font-bold text-white">{(settings.contacts || []).length} Safety Nodes</p>
              </div>
           </div>
         </div>
@@ -254,7 +299,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onClick={() => { onClearAlert(); window.location.reload(); }}
           className="mt-8 bg-slate-900 border border-white/10 px-8 py-4 rounded-full text-red-500 font-black uppercase tracking-widest text-[10px] hover:bg-slate-800"
         >
-          <X size={14} className="inline mr-2" /> Stop Alert
+          <X size={14} className="inline mr-2" /> Deactivate SOS
         </button>
       </div>
     );
@@ -270,26 +315,23 @@ const Dashboard: React.FC<DashboardProps> = ({
           </button>
         </div>
         <div className="mt-6 text-center">
-          <h2 className="text-xl font-black uppercase text-white tracking-tight">{settings.isListening ? 'Mesh Active' : 'Standby'}</h2>
-          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest italic mt-1">{settings.isListening ? `Listening for: "${settings.triggerPhrase}"` : 'Tap to start monitoring'}</p>
+          <h2 className="text-xl font-black uppercase text-white tracking-tight">{settings.isListening ? 'Guard Active' : 'Standby'}</h2>
+          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest italic mt-1">{settings.isListening ? `Trigger: "${settings.triggerPhrase}"` : 'Tap to start Aegis protection'}</p>
         </div>
       </div>
 
       <div className="glass p-5 rounded-[2.5rem] border border-white/5 relative overflow-hidden shadow-2xl">
-        <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-           <MapPin size={120} />
-        </div>
         <div className="flex items-center justify-between mb-5">
            <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500">
                  <Navigation size={18} />
               </div>
               <div>
-                <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Live Telemetry</h3>
+                <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Satellite Link</h3>
                 <div className="flex items-center gap-2 mt-0.5">
                    <div className={`w-1.5 h-1.5 rounded-full ${coords ? 'bg-green-500 animate-pulse' : 'bg-slate-700'}`} />
                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
-                      {coords ? 'Secure Signal Locked' : 'Searching for Satellites...'}
+                      {coords ? 'High-Accuracy Satellite Lock' : 'Searching for Satellites...'}
                    </span>
                 </div>
               </div>
@@ -326,7 +368,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div onClick={() => triggerSOS("Manual Alert")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer active:scale-95 transition-all">
           <ShieldAlert size={18} className="text-red-500 mb-3" />
           <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest">Emergency</p>
-          <div className="text-lg font-black text-white uppercase italic mt-1">SOS Alert</div>
+          <div className="text-lg font-black text-white uppercase italic mt-1">Trigger SOS</div>
         </div>
       </div>
 
@@ -336,7 +378,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             <Globe size={16} className="text-blue-500" /> Nearby Safety
           </h3>
           <button onClick={findSafeSpots} disabled={isSearching} className="text-[9px] font-black text-blue-500 uppercase disabled:opacity-30">
-            {isSearching ? 'Scanning...' : 'Scan'}
+            {isSearching ? 'Scanning...' : 'Scan Area'}
           </button>
         </div>
         <div className="space-y-3">
@@ -346,7 +388,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <ChevronRight size={14} className="text-slate-700" />
             </a>
           ))}
-          {safeSpots.length === 0 && <p className="text-center text-[9px] text-slate-600 uppercase font-black py-4">No local nodes found</p>}
+          {safeSpots.length === 0 && <p className="text-center text-[9px] text-slate-600 uppercase font-black py-4">No localized safety zones found</p>}
         </div>
       </div>
 
