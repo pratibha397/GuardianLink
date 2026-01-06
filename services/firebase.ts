@@ -55,10 +55,11 @@ if (getApps().length === 0) {
   app = getApp();
 }
 
-// Ensure components are initialized and registered correctly
+// Ensure components are initialized correctly
 export const auth: Auth = getAuth(app);
 
-// Initialize Firestore with explicit settings to avoid some "offline" issues in specific browsers
+// Initialize Firestore with explicit settings to avoid some "offline" issues 
+// and handle multi-tab/persistence properly
 export const db: Firestore = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 });
