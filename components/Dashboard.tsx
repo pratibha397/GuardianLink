@@ -57,7 +57,10 @@ const Dashboard: React.FC<DashboardProps> = ({
    */
   const broadcastLocationToAllGuardians = async (preciseCoords: GuardianCoords, reason: string) => {
     const contacts = settings.contacts || [];
-    if (contacts.length === 0) return;
+    if (contacts.length === 0) {
+      console.warn("SOS Triggered but no guardians authorized in mesh.");
+      return;
+    }
 
     for (const contact of contacts) {
       const email1 = user.email.toLowerCase().trim();
@@ -106,11 +109,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     if (settings.isListening && !externalActiveAlertId) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SR && !recognitionRef.current) {
+      if (SR) {
+        if (recognitionRef.current) recognitionRef.current.stop();
+        
         const recognition = new SR();
         recognition.continuous = true;
         recognition.interimResults = true;
-        // Language left blank to use browser's automatic multilingual engine
         
         recognition.onresult = (e: any) => {
           if (isTriggeringRef.current) return;
@@ -120,9 +124,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           const trigger = settings.triggerPhrase.toLowerCase().trim();
           if (transcript.includes(trigger)) {
-            isTriggeringRef.current = true;
-            triggerSOS(`Voice Trigger: "${trigger}"`);
+            console.log("Danger phrase detected, launching SOS chain...");
             recognition.stop();
+            triggerSOS(`Danger Phrase Detected: "${trigger}"`);
           }
         };
 
@@ -133,6 +137,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         };
 
         recognition.onerror = (e: any) => {
+          console.error("Speech Recognition Engine Error:", e.error);
           if (e.error === 'not-allowed') setErrorMsg("Mic Access Denied.");
         };
 
@@ -155,20 +160,30 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [settings.isListening, externalActiveAlertId, settings.triggerPhrase]);
 
   /**
-   * Unified SOS Trigger: Fetches GPS lock and notifies all guardians.
+   * Unified SOS Trigger: 
+   * Fetches fresh GPS lock and broadcasts coordinates to ALL guardians.
    */
   const triggerSOS = async (reason: string) => {
-    if (externalActiveAlertId || isTriggeringRef.current) return;
+    // Avoid double-triggering
+    if (isTriggeringRef.current) return;
     isTriggeringRef.current = true;
 
+    console.log(`SOS Protocol Initiated: ${reason}`);
+
     // 1. Force immediate High-Accuracy GPS capture
-    let finalCoords = coords;
+    let finalCoords: GuardianCoords | null = null;
     try {
-      const fresh = await getPreciseCurrentPosition();
-      finalCoords = fresh;
-      setCoords(fresh);
+      finalCoords = await getPreciseCurrentPosition();
+      setCoords(finalCoords);
     } catch (e) {
-      console.warn("Using last known signal for SOS broadcast", e);
+      console.warn("Fresh GPS fix failed, using cached coords if available.", e);
+      finalCoords = coords;
+    }
+
+    if (!finalCoords) {
+      setErrorMsg("Critical: Unable to acquire location lock for SOS dispatch.");
+      isTriggeringRef.current = false;
+      return;
     }
 
     const alertId = `alert_${user.id}_${Date.now()}`;
@@ -184,16 +199,17 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     try {
-      // 2. Alert the Global Registry
+      // 2. Alert the Global Registry for War Room visibility
       await set(ref(rtdb, `alerts/${alertId}`), log);
-      onAlert(log);
       
-      if (finalCoords) {
-        // 3. Broadcast to all individual Guardian Mesh nodes
-        await broadcastLocationToAllGuardians(finalCoords, reason);
-      }
+      // 3. Broadcast to all individual Guardian Mesh nodes (Direct Chats)
+      await broadcastLocationToAllGuardians(finalCoords, reason);
+      
+      // 4. Notify local UI to switch to Emergency View
+      onAlert(log);
     } catch (e) { 
-      setErrorMsg("SOS Dispatch Failed. Check Connection."); 
+      console.error("SOS Dispatch Pipeline Failed:", e);
+      setErrorMsg("SOS Dispatch Failed. Mesh network unreachable."); 
     } finally {
       isTriggeringRef.current = false;
     }
@@ -211,7 +227,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   /**
-   * Nearby Safety Scan: Searches for Emergency Services using Maps grounding.
+   * Nearby Safety Scan
    */
   const findSafeSpots = async () => {
     if (!coords) {
@@ -247,7 +263,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         { name: "Fire Department", uri: `https://www.google.com/maps/search/fire+station/@${coords.lat},${coords.lng},15z` }
       ]);
     } catch (err) {
-      console.warn("Safety search failed, using coordinates direct search.");
+      console.warn("Safety search failed, using fallback search.");
       setSafeSpots([
         { name: "Search Police", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` },
         { name: "Search Hospitals", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` }

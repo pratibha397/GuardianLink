@@ -1,14 +1,12 @@
 
 import {
-  Activity,
   ArrowLeft,
-  Camera,
   ExternalLink,
+  MapPin,
   MessageCircle,
   MessageSquare,
   MoreVertical,
   Navigation,
-  Phone,
   Search,
   Send,
   ShieldCheck,
@@ -16,7 +14,8 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { DataSnapshot, onValue, push, ref, rtdb } from '../services/firebase';
-import { AppSettings, ChatMessage, EmergencyContact, User } from '../types';
+import { getPreciseCurrentPosition } from '../services/LocationServices';
+import { AppSettings, ChatMessage, EmergencyContact, GuardianCoords, User } from '../types';
 
 interface MessengerProps {
   user: User;
@@ -28,25 +27,18 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
   const [selectedContact, setSelectedContact] = useState<EmergencyContact | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   /**
    * Generates a unique, deterministic ID for the conversation.
-   * Both User A and User B will generate the exact same ID.
    */
   const getChatPath = (contact: EmergencyContact) => {
-    // If we are the victim in an SOS, use the dedicated Alert node
     if (activeAlertId) return `alerts/${activeAlertId}`;
     
-    // Normalize emails to avoid case-sensitivity issues
     const email1 = user.email.toLowerCase().trim();
     const email2 = contact.email.toLowerCase().trim();
-    
-    // Sort alphabetically so the order is consistent for both users
     const sortedEmails = [email1, email2].sort();
-    
-    // Sanitize characters that are forbidden in Firebase RTDB paths
-    // We replace dots with underscores to match the Security Rules logic
     const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
     
     const combinedId = `${sanitize(sortedEmails[0])}__${sanitize(sortedEmails[1])}`;
@@ -57,19 +49,15 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
   useEffect(() => {
     if (selectedContact) {
       const path = getChatPath(selectedContact);
-      // Listen to the 'updates' sub-node where messages are stored
       const messagesRef = ref(rtdb, `${path}/updates`);
       
       const unsubscribe = onValue(messagesRef, (snapshot: DataSnapshot) => {
         const data = snapshot.val();
         if (data) {
-          // Convert the Firebase object of messages into a sorted array
           const msgArray = Object.keys(data).map(key => ({
             ...data[key],
             id: key
           }));
-          
-          // Sort by timestamp to ensure chronological order
           const sorted = msgArray.sort((a: any, b: any) => a.timestamp - b.timestamp) as ChatMessage[];
           setMessages(sorted);
         } else {
@@ -79,20 +67,18 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
         console.error("Firebase Realtime Listener Error:", error);
       });
 
-      // Cleanup listener on unmount or when changing contact
       return () => unsubscribe();
     } else {
       setMessages([]);
     }
   }, [selectedContact, activeAlertId, user.email]);
 
-  // Handle auto-scroll to bottom on new messages
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const sendMessage = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     const messageText = text.trim();
     if (!selectedContact || !messageText) return;
 
@@ -106,15 +92,47 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
     };
 
     try {
-      setText(''); // Clear input immediately for better UX
+      setText('');
       await push(ref(rtdb, `${path}/updates`), newMessage);
     } catch (err) { 
       console.error("Failed to transmit message:", err);
-      setText(messageText); // Restore text on failure
+      setText(messageText);
     }
   };
 
-  // 1. INBOX VIEW (List of Guardians)
+  /**
+   * Manual Location Dispatch:
+   * Fetches fresh High-Accuracy coordinates and sends them as a location message.
+   */
+  const sendManualLocation = async () => {
+    if (!selectedContact || isLocating) return;
+    
+    setIsLocating(true);
+    try {
+      const coords: GuardianCoords = await getPreciseCurrentPosition();
+      const path = getChatPath(selectedContact);
+      
+      const locationMsg: ChatMessage = {
+        id: `loc_${Date.now()}`,
+        type: 'location',
+        senderName: user.name,
+        senderEmail: user.email.toLowerCase().trim(),
+        text: '📍 Shared Live Location',
+        lat: coords.lat,
+        lng: coords.lng,
+        timestamp: Date.now()
+      };
+
+      await push(ref(rtdb, `${path}/updates`), locationMsg);
+    } catch (err) {
+      console.error("Manual location dispatch failed:", err);
+      alert("Failed to acquire GPS lock. Please check permissions.");
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  // 1. INBOX VIEW
   if (!selectedContact) {
     return (
       <div className="flex flex-col h-full animate-in fade-in duration-500">
@@ -177,7 +195,7 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
     );
   }
 
-  // 2. CHAT VIEW (Selected Conversation)
+  // 2. CHAT VIEW
   return (
     <div className="fixed inset-0 z-[60] bg-[#020617] flex flex-col animate-in slide-in-from-right duration-300">
       <header className="p-6 bg-[#020617]/90 backdrop-blur-xl flex items-center justify-between border-b border-white/5 sticky top-0 z-10">
@@ -199,8 +217,13 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
           </div>
         </div>
         <div className="flex items-center gap-4 text-slate-500">
-          <Phone size={18} className="cursor-not-allowed opacity-20" />
-          <Camera size={20} className="cursor-not-allowed opacity-20" />
+          <button 
+            onClick={sendManualLocation}
+            disabled={isLocating}
+            className={`p-2 rounded-xl transition-all ${isLocating ? 'text-blue-500 animate-pulse bg-blue-500/10' : 'hover:text-blue-500 hover:bg-blue-500/10'}`}
+          >
+            <MapPin size={22} />
+          </button>
         </div>
       </header>
 
@@ -224,20 +247,24 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
             
             if (msg.type === 'location') {
               return (
-                <div key={idx} className="flex justify-center my-6">
-                  <div className="bg-blue-600 p-5 rounded-[2rem] w-full max-w-[280px] shadow-2xl">
+                <div key={idx} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} my-4 animate-in fade-in slide-in-from-bottom-2`}>
+                   {!isMe && <p className="text-[8px] font-black uppercase text-blue-400 mb-1 px-2">{msg.senderName}</p>}
+                   <div className="bg-blue-600 p-5 rounded-[2rem] w-full max-w-[240px] shadow-2xl">
                     <div className="flex items-center gap-3 mb-4">
                       <div className="bg-white/20 p-2 rounded-xl text-white"><Navigation size={18} /></div>
-                      <span className="text-white text-[12px] font-black uppercase tracking-widest italic">Live Pinpoint</span>
+                      <span className="text-white text-[10px] font-black uppercase tracking-widest italic">Live Pinpoint</span>
                     </div>
                     <a 
                       href={`https://www.google.com/maps?q=${msg.lat},${msg.lng}`}
                       target="_blank" rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 bg-white py-3.5 rounded-2xl text-blue-950 text-[10px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all"
+                      className="flex items-center justify-center gap-2 bg-white py-3 rounded-xl text-blue-950 text-[9px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all"
                     >
-                      View on Map <ExternalLink size={12} />
+                      View Map <ExternalLink size={10} />
                     </a>
                   </div>
+                  <span className="text-[7px] font-black text-slate-700 uppercase mt-1.5 px-2">
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
                 </div>
               );
             }
@@ -267,7 +294,9 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
               className="w-full bg-slate-900 border border-white/10 rounded-3xl px-6 py-4 text-sm text-white outline-none focus:border-blue-500 shadow-inner placeholder:text-slate-700"
             />
             <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-3 text-slate-700">
-               <Activity size={18} className="cursor-pointer hover:text-blue-500 transition-colors" />
+               <button type="button" onClick={sendManualLocation}>
+                 <MapPin size={18} className={`${isLocating ? 'text-blue-500 animate-bounce' : 'hover:text-blue-500'} transition-colors`} />
+               </button>
             </div>
           </div>
           <button 
