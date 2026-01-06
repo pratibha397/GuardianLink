@@ -2,24 +2,27 @@
 import { GuardianCoords } from '../types';
 
 /**
- * Initiates a high-precision location watch.
- * Enforces PRIORITY_HIGH_ACCURACY by setting enableHighAccuracy to true
- * and disabling caching (maximumAge: 0) to ensure data is fresh from GPS satellites.
+ * Standard Geolocation Options configured for "High Accuracy" (GPS Priority).
+ * Emulates Android's PRIORITY_HIGH_ACCURACY.
+ */
+const HIGH_ACCURACY_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  timeout: 15000,   // Increased to 15s for cold starts/indoor fixes
+  maximumAge: 0     // Force fresh satellite data, zero caching
+};
+
+/**
+ * Initiates a persistent, high-frequency location watch.
+ * Updates every time the hardware detects a shift in coordinates.
  */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
   onError: (message: string) => void
 ): number {
   if (!navigator.geolocation) {
-    onError("GPS Hardware Missing");
+    onError("Hardware Incompatibility: GPS missing.");
     return -1;
   }
-
-  const options: PositionOptions = {
-    enableHighAccuracy: true,
-    timeout: 10000, 
-    maximumAge: 0 // Prevents using cached network locations
-  };
 
   const watchId = navigator.geolocation.watchPosition(
     (position) => {
@@ -36,46 +39,57 @@ export function startLocationWatch(
       let msg = "GPS Signal Error";
       switch (error.code) {
         case error.PERMISSION_DENIED:
-          msg = "GPS Permission Denied";
+          msg = "Access Denied: Grant GPS permissions in settings.";
           break;
         case error.POSITION_UNAVAILABLE:
-          msg = "Satellite Fix Lost";
+          msg = "Satellite Fix Unavailable: Move to an open area.";
           break;
         case error.TIMEOUT:
-          msg = "GPS Signal Timeout";
+          msg = "GPS Signal Timed Out: Searching for satellites...";
           break;
       }
       onError(msg);
     },
-    options
+    HIGH_ACCURACY_OPTIONS
   );
 
   return watchId;
 }
 
 /**
- * Captures a single, high-accuracy coordinate fix immediately.
- * Primarily used for SOS locking.
+ * Performs a forced, high-priority location capture with retries.
+ * Guaranteed to attempt high-accuracy locking before resolving.
  */
-export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
+export async function getPreciseCurrentPosition(retryCount = 2): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error("No GPS Hardware"));
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-        speed: pos.coords.speed,
-        heading: pos.coords.heading,
-        timestamp: pos.timestamp
-      }),
-      (err) => reject(err),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-    );
+    const attemptFetch = (remainingRetries: number) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          speed: pos.coords.speed,
+          heading: pos.coords.heading,
+          timestamp: pos.timestamp
+        }),
+        (err) => {
+          if (remainingRetries > 0) {
+            console.warn(`GPS fix failed, retrying... (${remainingRetries} left)`);
+            attemptFetch(remainingRetries - 1);
+          } else {
+            reject(err);
+          }
+        },
+        HIGH_ACCURACY_OPTIONS
+      );
+    };
+
+    attemptFetch(retryCount);
   });
 }
 

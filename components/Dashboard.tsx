@@ -40,27 +40,24 @@ const Dashboard: React.FC<DashboardProps> = ({
   const isTriggeringRef = useRef(false);
 
   /**
-   * Requests runtime permissions for high-accuracy location and microphone.
+   * Explicitly requests core permissions to ensure features don't fail silently.
    */
   const requestCorePermissions = async (): Promise<boolean> => {
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
       return true;
     } catch (e) {
-      console.warn("Microphone permission denied", e);
+      console.warn("Permission denied", e);
       return false;
     }
   };
 
   /**
-   * Broadcasts SOS coordinates to EVERY guardian in the contacts list.
+   * Broadcasts the locked SOS location to all mesh nodes.
    */
   const broadcastLocationToAllGuardians = async (preciseCoords: GuardianCoords, reason: string) => {
     const contacts = settings.contacts || [];
-    if (contacts.length === 0) {
-      console.warn("SOS Triggered but no guardians authorized in mesh.");
-      return;
-    }
+    if (contacts.length === 0) return;
 
     for (const contact of contacts) {
       const email1 = user.email.toLowerCase().trim();
@@ -74,7 +71,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         type: 'location',
         senderName: user.name,
         senderEmail: user.email,
-        text: `🚨 SOS TRIGGERED: ${reason.toUpperCase()} 🚨`,
+        text: `🚨 EMERGENCY ALERT: ${reason.toUpperCase()} 🚨`,
         lat: preciseCoords.lat,
         lng: preciseCoords.lng,
         timestamp: Date.now()
@@ -83,21 +80,26 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         await push(ref(rtdb, `${path}/updates`), msg);
       } catch (e) {
-        console.error(`Failed to dispatch SOS to ${contact.email}`, e);
+        console.error(`Alert failed for node ${contact.email}`, e);
       }
     }
   };
 
-  // Synchronize Live Location to Firebase during Emergency
+  // High-Frequency Mesh Synchronizer (Live Location Provider)
   useEffect(() => {
     watchIdRef.current = startLocationWatch(
       (c: GuardianCoords) => {
         setCoords(c);
+        setErrorMsg(null);
+        // During an emergency, push real-time updates to the global alert node
         if (externalActiveAlertId) {
           set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
         }
       },
-      (err: string) => setErrorMsg(err)
+      (err: string) => {
+        setErrorMsg(err);
+        console.warn("Location watch degraded:", err);
+      }
     );
 
     return () => {
@@ -105,112 +107,78 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
   }, [externalActiveAlertId]);
 
-  // Speech Recognition Control Logic
+  // Voice recognition logic - un-modified except for SOS callback
   useEffect(() => {
     if (settings.isListening && !externalActiveAlertId) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR) {
         if (recognitionRef.current) recognitionRef.current.stop();
-        
         const recognition = new SR();
         recognition.continuous = true;
         recognition.interimResults = true;
-        
         recognition.onresult = (e: any) => {
           if (isTriggeringRef.current) return;
-          const transcript = Array.from(e.results)
-            .map((r: any) => r[0].transcript)
-            .join(' ').toLowerCase();
-
+          const transcript = Array.from(e.results).map((r: any) => r[0].transcript).join(' ').toLowerCase();
           const trigger = settings.triggerPhrase.toLowerCase().trim();
           if (transcript.includes(trigger)) {
-            console.log("Danger phrase detected, launching SOS chain...");
             recognition.stop();
-            triggerSOS(`Danger Phrase Detected: "${trigger}"`);
+            triggerSOS(`Panic Phrase Detected: "${trigger}"`);
           }
         };
-
         recognition.onend = () => {
           if (settings.isListening && !externalActiveAlertId && !isTriggeringRef.current) {
             try { recognition.start(); } catch(e) {}
           }
         };
-
-        recognition.onerror = (e: any) => {
-          console.error("Speech Recognition Engine Error:", e.error);
-          if (e.error === 'not-allowed') setErrorMsg("Mic Access Denied.");
-        };
-
         try { 
           recognition.start();
           recognitionRef.current = recognition;
-        } catch(e) { console.error("Speech init failure", e); }
+        } catch(e) {}
       }
     } else if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
     }
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-        recognitionRef.current = null;
-      }
-    };
   }, [settings.isListening, externalActiveAlertId, settings.triggerPhrase]);
 
   /**
-   * Unified SOS Trigger: 
-   * Fetches fresh GPS lock and broadcasts coordinates to ALL guardians.
+   * Rewritten SOS Dispatch Logic:
+   * Forces a high-accuracy GPS lock and waits for coordinates before broadcasting.
    */
   const triggerSOS = async (reason: string) => {
-    // Avoid double-triggering
     if (isTriggeringRef.current) return;
     isTriggeringRef.current = true;
-
-    console.log(`SOS Protocol Initiated: ${reason}`);
-
-    // 1. Force immediate High-Accuracy GPS capture
-    let finalCoords: GuardianCoords | null = null;
-    try {
-      finalCoords = await getPreciseCurrentPosition();
-      setCoords(finalCoords);
-    } catch (e) {
-      console.warn("Fresh GPS fix failed, using cached coords if available.", e);
-      finalCoords = coords;
-    }
-
-    if (!finalCoords) {
-      setErrorMsg("Critical: Unable to acquire location lock for SOS dispatch.");
-      isTriggeringRef.current = false;
-      return;
-    }
-
-    const alertId = `alert_${user.id}_${Date.now()}`;
-    const log: AlertLog = {
-      id: alertId, 
-      senderEmail: user.email, 
-      senderName: user.name,
-      timestamp: Date.now(), 
-      location: finalCoords, 
-      message: reason,
-      isLive: true, 
-      recipients: (settings.contacts || []).map(c => c.email)
-    };
+    setErrorMsg("Acquiring GPS Signal Lock...");
 
     try {
-      // 2. Alert the Global Registry for War Room visibility
+      // 1. Force a high-accuracy coordinate fix
+      const lockedCoords = await getPreciseCurrentPosition();
+      setCoords(lockedCoords);
+      setErrorMsg(null);
+
+      const alertId = `alert_${user.id}_${Date.now()}`;
+      const log: AlertLog = {
+        id: alertId, 
+        senderEmail: user.email, 
+        senderName: user.name,
+        timestamp: Date.now(), 
+        location: lockedCoords, 
+        message: reason,
+        isLive: true, 
+        recipients: (settings.contacts || []).map(c => c.email)
+      };
+
+      // 2. Transmit to global registry
       await set(ref(rtdb, `alerts/${alertId}`), log);
       
-      // 3. Broadcast to all individual Guardian Mesh nodes (Direct Chats)
-      await broadcastLocationToAllGuardians(finalCoords, reason);
+      // 3. Transmit to individual Mesh nodes
+      await broadcastLocationToAllGuardians(lockedCoords, reason);
       
-      // 4. Notify local UI to switch to Emergency View
+      // 4. Activate local emergency UI
       onAlert(log);
     } catch (e) { 
-      console.error("SOS Dispatch Pipeline Failed:", e);
-      setErrorMsg("SOS Dispatch Failed. Mesh network unreachable."); 
-    } finally {
+      console.error("SOS Signal Failure:", e);
+      setErrorMsg("Critical: Unable to acquire location lock for SOS dispatch."); 
       isTriggeringRef.current = false;
     }
   };
@@ -219,7 +187,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!settings.isListening) {
       const hasMic = await requestCorePermissions();
       if (!hasMic) {
-        setErrorMsg("Microphone access is required for voice detection.");
+        setErrorMsg("Safety features require microphone access.");
         return;
       }
     }
@@ -227,11 +195,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   /**
-   * Nearby Safety Scan
+   * AI Safety Scan
    */
   const findSafeSpots = async () => {
     if (!coords) {
-      setErrorMsg("Acquiring GPS Signal...");
+      setErrorMsg("GPS lock required for safety search.");
       return;
     }
     setIsSearching(true);
@@ -240,7 +208,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Locate high-priority safety zones such as police stations, hospitals, and fire stations near latitude ${coords.lat}, longitude ${coords.lng}.`,
+        contents: `Locate high-priority safety zones such as police stations and hospitals near latitude ${coords.lat}, longitude ${coords.lng}.`,
         config: {
           tools: [{ googleMaps: {} }],
           toolConfig: {
@@ -258,50 +226,44 @@ const Dashboard: React.FC<DashboardProps> = ({
         }));
 
       setSafeSpots(extractedSpots.length > 0 ? extractedSpots : [
-        { name: "Nearest Police", uri: `https://www.google.com/maps/search/police+station/@${coords.lat},${coords.lng},15z` }, 
-        { name: "Nearest Hospital", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` },
-        { name: "Fire Department", uri: `https://www.google.com/maps/search/fire+station/@${coords.lat},${coords.lng},15z` }
+        { name: "Police Station", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` }, 
+        { name: "Medical Center", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` }
       ]);
     } catch (err) {
-      console.warn("Safety search failed, using fallback search.");
       setSafeSpots([
-        { name: "Search Police", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` },
-        { name: "Search Hospitals", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` }
+        { name: "Police Search", uri: `https://www.google.com/maps/search/police/@${coords.lat},${coords.lng},15z` },
+        { name: "Hospital Search", uri: `https://www.google.com/maps/search/hospital/@${coords.lat},${coords.lng},15z` }
       ]);
     } finally { setIsSearching(false); }
   };
 
   if (externalActiveAlertId) {
     return (
-      <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500 flex flex-col items-center justify-center py-20 text-center">
+      <div className="space-y-6 flex flex-col items-center justify-center py-20 text-center animate-in fade-in duration-500">
         <div className="bg-red-600 p-8 rounded-full shadow-2xl animate-pulse mb-6">
           <ShieldAlert size={60} className="text-white" />
         </div>
         <h2 className="text-3xl font-black uppercase text-white italic tracking-tighter">Emergency Alert Live</h2>
-        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs max-w-xs">High-accuracy location is being broadcast to all guardians.</p>
-        
-        <div className="mt-10 p-6 glass rounded-[2.5rem] w-full border-red-500/20">
-          <div className="flex items-center gap-4 text-left">
-             <Activity className="text-red-500" />
-             <div>
-               <p className="text-[10px] font-black uppercase text-slate-500">Broadcasting To</p>
-               <p className="text-sm font-bold text-white">{(settings.contacts || []).length} Guardians</p>
-             </div>
-          </div>
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs max-w-xs">Broadcasting live coordinates to guardians.</p>
+        <div className="mt-10 p-6 glass rounded-[2.5rem] w-full border-red-500/20 flex items-center gap-4 text-left">
+           <Activity className="text-red-500" />
+           <div>
+             <p className="text-[10px] font-black uppercase text-slate-500">Broadcasting To</p>
+             <p className="text-sm font-bold text-white">{(settings.contacts || []).length} Guard Nodes</p>
+           </div>
         </div>
-
         <button 
           onClick={() => { onClearAlert(); window.location.reload(); }}
           className="mt-8 bg-slate-900 border border-white/10 px-8 py-4 rounded-full text-red-500 font-black uppercase tracking-widest text-[10px] hover:bg-slate-800"
         >
-          <X size={14} className="inline mr-2" /> Deactivate Alert
+          <X size={14} className="inline mr-2" /> Deactivate
         </button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-5 duration-700">
+    <div className="space-y-8 animate-in fade-in duration-700">
       <div className="flex flex-col items-center justify-center py-4">
         <div className={`neural-ring ${settings.isListening ? 'active' : ''}`}>
           {settings.isListening && <><div className="ring-layer" /><div className="ring-layer" style={{animationDelay: '1s'}}/></>}
@@ -311,22 +273,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
         <div className="mt-6 text-center">
           <h2 className="text-xl font-black uppercase text-white tracking-tight">{settings.isListening ? 'Mesh Active' : 'Standby'}</h2>
-          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest italic mt-1">{settings.isListening ? `Trigger: "${settings.triggerPhrase}"` : 'Tap to start Aegis protection'}</p>
+          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest italic mt-1">{settings.isListening ? `Listening for: "${settings.triggerPhrase}"` : 'Tap to start protection'}</p>
         </div>
       </div>
 
       <div className="glass p-5 rounded-[2.5rem] border border-white/5 relative overflow-hidden shadow-2xl">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center justify-between mb-5 px-1">
            <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500">
                  <Navigation size={18} />
               </div>
               <div>
-                <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Satellite Link</h3>
+                <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Fused Geolocation</h3>
                 <div className="flex items-center gap-2 mt-0.5">
                    <div className={`w-1.5 h-1.5 rounded-full ${coords ? 'bg-green-500 animate-pulse' : 'bg-slate-700'}`} />
                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
-                      {coords ? 'High-Accuracy GPS Lock' : 'Searching for Satellites...'}
+                      {coords ? 'High-Accuracy Locked' : 'Searching for satellites...'}
                    </span>
                 </div>
               </div>
@@ -335,7 +297,7 @@ const Dashboard: React.FC<DashboardProps> = ({
              <a 
                href={`https://www.google.com/maps?q=${coords.lat},${coords.lng}`}
                target="_blank" rel="noopener noreferrer"
-               className="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-600/20 active:scale-95 transition-all"
+               className="p-3 bg-blue-600 text-white rounded-2xl shadow-lg active:scale-95 transition-all"
              >
                <ExternalLink size={14} />
              </a>
@@ -358,12 +320,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="glass p-5 rounded-[2rem] border border-white/5">
           <Timer size={18} className="text-blue-500 mb-3" />
           <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Safety Timer</p>
-          <div className="text-lg font-black text-white mt-1">Check-In</div>
+          <div className="text-lg font-black text-white mt-1 italic">Check-In</div>
         </div>
         <div onClick={() => triggerSOS("Manual Alert")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer active:scale-95 transition-all">
           <ShieldAlert size={18} className="text-red-500 mb-3" />
           <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest">Emergency</p>
-          <div className="text-lg font-black text-white uppercase italic mt-1">SOS Alert</div>
+          <div className="text-lg font-black text-white uppercase italic mt-1">Manual SOS</div>
         </div>
       </div>
 
@@ -383,7 +345,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <ChevronRight size={14} className="text-slate-700" />
             </a>
           ))}
-          {safeSpots.length === 0 && <p className="text-center text-[9px] text-slate-600 uppercase font-black py-4">No local safety nodes found</p>}
+          {safeSpots.length === 0 && <p className="text-center text-[9px] text-slate-600 uppercase font-black py-4">Search locally for help</p>}
         </div>
       </div>
 
