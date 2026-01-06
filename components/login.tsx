@@ -1,6 +1,6 @@
 
 import { ArrowRight, CheckCircle2, ChevronDown, Lock, MessageSquare, Phone, Shield, User as UserIcon } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { User } from '../types';
 
 interface AuthScreenProps {

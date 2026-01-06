@@ -1,6 +1,6 @@
 
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';

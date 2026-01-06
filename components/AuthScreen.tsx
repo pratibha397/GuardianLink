@@ -1,6 +1,6 @@
 
 import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, Shield, User as UserIcon } from 'lucide-react';
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   auth,
   createUserWithEmailAndPassword,
