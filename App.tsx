@@ -5,8 +5,8 @@ import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
-import { auth, db, doc, getDoc, setDoc } from './services/firebase';
-import { AppSettings, AppView, User } from './types';
+import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
+import { AppSettings, AppView, ChatMessage, User } from './types';
 
 const SETTINGS_KEY = 'guardian_link_settings_v3';
 const ACTIVE_ALERT_KEY = 'guardian_active_alert_id_v3';
@@ -78,6 +78,81 @@ const App: React.FC = () => {
 
     fetchSettings();
   }, [user?.email]);
+
+  // DETECTOR FOR GUARDIAN ALERTS (Receiver Audio Logic)
+  useEffect(() => {
+    if (!user || !settings.contacts || settings.contacts.length === 0) return;
+
+    let alertActive = false;
+    let timerId: any = null;
+
+    const playAlert = () => {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance("HELP HELP, EMERGENCY ALERT");
+      utterance.volume = 1; // Max volume for the utterance
+      utterance.rate = 0.9;
+      utterance.pitch = 1.1;
+      utterance.onend = () => {
+        if (alertActive) {
+          timerId = setTimeout(playAlert, 1500);
+        }
+      };
+      window.speechSynthesis.speak(utterance);
+    };
+
+    const stopAlert = () => {
+      alertActive = false;
+      if (timerId) clearTimeout(timerId);
+      window.speechSynthesis.cancel();
+    };
+
+    const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
+    
+    // Subscribe to all authorized mesh nodes for incoming SOS signals
+    const unsubscribers = settings.contacts.map(contact => {
+      const email1 = user.email.toLowerCase().trim();
+      const email2 = contact.email.toLowerCase().trim();
+      const sorted = [email1, email2].sort();
+      const combinedId = `${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
+      const path = `direct_chats/${combinedId}/updates`;
+      
+      return onValue(ref(rtdb, path), (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          const msgs = Object.values(data) as ChatMessage[];
+          if (msgs.length > 0) {
+            // Get the most recent message in the thread
+            const latest = msgs.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
+            const isFromOther = latest.senderEmail.toLowerCase().trim() !== user.email.toLowerCase().trim();
+            const isSOS = latest.type === 'location' || 
+                          /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
+            
+            // Only trigger if message is fresh (last 2 minutes) to prevent legacy alerts firing
+            if (isFromOther && isSOS && (Date.now() - latest.timestamp < 120000)) {
+              if (!alertActive) {
+                alertActive = true;
+                playAlert();
+              }
+            }
+          }
+        }
+      });
+    });
+
+    // Interaction stops the alert (counts as "opening" or "checking")
+    const handleInteraction = () => stopAlert();
+    window.addEventListener('click', handleInteraction);
+    window.addEventListener('keydown', handleInteraction);
+    window.addEventListener('touchstart', handleInteraction);
+
+    return () => {
+      unsubscribers.forEach(u => u());
+      stopAlert();
+      window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('keydown', handleInteraction);
+      window.removeEventListener('touchstart', handleInteraction);
+    };
+  }, [user?.email, settings.contacts]);
 
   // Persist settings locally and to cloud whenever they change
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
