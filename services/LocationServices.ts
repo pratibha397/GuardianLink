@@ -1,6 +1,11 @@
 
 import { GuardianCoords } from '../types';
 
+/**
+ * Initiates a high-precision location watch.
+ * Enforces PRIORITY_HIGH_ACCURACY equivalents by disabling caching and 
+ * setting aggressive hardware timeouts.
+ */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
   onError: (message: string) => void
@@ -10,13 +15,12 @@ export function startLocationWatch(
     return -1;
   }
 
-  // Optimized for resilience: 
-  // - timeout increased to 30s to give hardware more time
-  // - maximumAge set to 5s to allow for a quick initial fix from cache
+  // FORCE FRESH COORDINATES: maximumAge: 0 ensures we do not use a cached position
+  // enableHighAccuracy: true hints the device to use GPS satellites over network/WiFi trianglulation
   const options: PositionOptions = {
     enableHighAccuracy: true,
-    timeout: 30000, 
-    maximumAge: 5000
+    timeout: 10000, 
+    maximumAge: 0 
   };
 
   const watchId = navigator.geolocation.watchPosition(
@@ -34,35 +38,47 @@ export function startLocationWatch(
       let msg = "GPS Signal Error";
       switch (error.code) {
         case error.PERMISSION_DENIED:
-          msg = "Permission Denied: Please enable location access in settings.";
+          msg = "Location Access Denied. Check System Permissions.";
           break;
         case error.POSITION_UNAVAILABLE:
-          msg = "Signal Lost: Trying to re-establish connection...";
+          msg = "Satellite Signal Lost. Searching...";
           break;
         case error.TIMEOUT:
-          msg = "GPS Timeout: Satellite signal is weak. Move near a window or outdoors.";
+          msg = "GPS Acquisition Timeout. Precision restricted.";
           break;
       }
       onError(msg);
-      
-      // If we timeout on High Accuracy, try one-shot low accuracy as a fallback
-      if (error.code === error.TIMEOUT) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => onUpdate({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            timestamp: pos.timestamp
-          }),
-          null,
-          { enableHighAccuracy: false, timeout: 10000 }
-        );
-      }
     },
     options
   );
 
   return watchId;
+}
+
+/**
+ * Single-shot high-accuracy position fetch.
+ * Used during emergency triggers to lock the most precise coordinate available.
+ */
+export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("No GPS Hardware"));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        speed: pos.coords.speed,
+        heading: pos.coords.heading,
+        timestamp: pos.timestamp
+      }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+  });
 }
 
 export function stopLocationWatch(watchId: number): void {

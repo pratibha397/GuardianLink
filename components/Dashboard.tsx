@@ -13,7 +13,7 @@ import {
   X
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { startLocationWatch, stopLocationWatch } from '../services/LocationServices';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, ChatMessage, GuardianCoords, SafeSpot } from '../types';
 
@@ -40,12 +40,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   
   const watchIdRef = useRef<number>(-1);
   const recognitionRef = useRef<any>(null);
+  const isTriggeringRef = useRef(false);
 
-  // Helper for direct location dispatch to primary guardian
-  const sendLocationDirect = async (currentCoords: GuardianCoords | null) => {
-    if (!currentCoords || !settings.primaryGuardianEmail) return;
+  // CRITICAL FIX: Send location directly using fresh coordinates and deterministic path
+  const sendLocationDirect = async (preciseCoords: GuardianCoords) => {
+    if (!settings.primaryGuardianEmail) return;
 
-    // Use deterministic path generation
     const email1 = user.email.toLowerCase().trim();
     const email2 = settings.primaryGuardianEmail.toLowerCase().trim();
     const sorted = [email1, email2].sort();
@@ -57,27 +57,26 @@ const Dashboard: React.FC<DashboardProps> = ({
       type: 'location',
       senderName: user.name,
       senderEmail: user.email,
-      text: '🚨 VOICE TRIGGERED EMERGENCY LOCATION 🚨',
-      lat: currentCoords.lat,
-      lng: currentCoords.lng,
+      text: '🚨 PANIC PHRASE DETECTED: HIGH-ACCURACY GPS LOCK 🚨',
+      lat: preciseCoords.lat,
+      lng: preciseCoords.lng,
       timestamp: Date.now()
     };
 
     try {
       await push(ref(rtdb, `${path}/updates`), msg);
     } catch (e) {
-      console.error("Direct alert dispatch failed:", e);
+      console.error("Critical: Direct alert dispatch failed!", e);
     }
   };
 
-  const pushLocationToChat = async (targetPath: string, currentCoords: GuardianCoords | null) => {
-    if (!currentCoords) return;
+  const pushLocationToChat = async (targetPath: string, currentCoords: GuardianCoords) => {
     const msg: ChatMessage = {
       id: `loc_${Date.now()}`,
       type: 'location',
       senderName: user.name,
       senderEmail: user.email,
-      text: '📍 Automatic Emergency Location shared.',
+      text: '📍 Emergency GPS Broadcaster Active.',
       lat: currentCoords.lat,
       lng: currentCoords.lng,
       timestamp: Date.now()
@@ -87,8 +86,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (e) { console.error(e); }
   };
 
-  // GPS & Enhanced Voice Trigger Logic
+  // REWROTE: Enhanced Voice Recognition & GPS Watch
   useEffect(() => {
+    // Persistent GPS Watch for UI
     watchIdRef.current = startLocationWatch(
       (c: GuardianCoords) => {
         setCoords(c);
@@ -99,44 +99,51 @@ const Dashboard: React.FC<DashboardProps> = ({
       (err: string) => setErrorMsg(err)
     );
 
-    if (settings.isListening) {
+    // Multilingual Voice Detection
+    if (settings.isListening && !externalActiveAlertId) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SR && !recognitionRef.current) {
+      if (SR) {
         const recognition = new SR();
         recognition.continuous = true;
-        recognition.interimResults = true; // Crucial for faster detection
-        recognition.lang = ''; // Let the browser handle auto-detection where possible
+        recognition.interimResults = true;
+        // Lang is left unset to utilize browser's automatic language detection
         
         recognition.onresult = (e: any) => {
+          if (isTriggeringRef.current) return;
+
           const results = Array.from(e.results);
-          // Aggregate all interim and final results into a single scan string
           const transcript = results
             .map((r: any) => r[0].transcript)
             .join(' ')
             .toLowerCase();
 
-          const trigger = settings.triggerPhrase.toLowerCase();
+          const trigger = settings.triggerPhrase.toLowerCase().trim();
           
           if (transcript.includes(trigger)) {
+            isTriggeringRef.current = true;
             triggerSOS(`Voice Triggered: "${trigger}"`);
-            // Clear recognition to prevent multiple triggers in one breath
             recognition.stop();
           }
         };
 
         recognition.onend = () => {
-          // Auto-restart to maintain persistent mesh listening
-          if (settings.isListening && !externalActiveAlertId) {
+          // Robust auto-restart mechanism
+          if (settings.isListening && !externalActiveAlertId && !isTriggeringRef.current) {
             try { recognition.start(); } catch(e) {}
+          }
+        };
+
+        recognition.onerror = (err: any) => {
+          console.error("Speech Engine Error:", err);
+          if (err.error === 'not-allowed') {
+            setErrorMsg("Microphone Access Required for Panic Detection.");
+            updateSettings({ isListening: false });
           }
         };
 
         try { recognition.start(); } catch(e) {}
         recognitionRef.current = recognition;
       }
-    } else if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
     }
 
     return () => {
@@ -145,29 +152,45 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
   }, [settings.isListening, externalActiveAlertId, settings.triggerPhrase]);
 
+  // CRITICAL FIX: Trigger Logic with immediate high-accuracy capture
   const triggerSOS = async (reason: string) => {
     if (externalActiveAlertId) return;
+
+    // 1. Get the freshest possible position IMMEDIATELY
+    let finalCoords = coords;
+    try {
+      const fresh = await getPreciseCurrentPosition();
+      finalCoords = fresh;
+      setCoords(fresh);
+    } catch (e) {
+      console.warn("Could not get fresh fix, using latest cached signal", e);
+    }
+
     const alertId = `alert_${user.id}_${Date.now()}`;
     const log: AlertLog = {
       id: alertId, senderEmail: user.email, senderName: user.name,
-      timestamp: Date.now(), location: coords, message: reason,
+      timestamp: Date.now(), location: finalCoords, message: reason,
       isLive: true, recipients: settings.contacts.map(c => c.email)
     };
+
     try {
-      // 1. Log to global alerts node
+      // 2. Alert Global Registry
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
       setTimerActive(false);
 
-      // 2. Push to emergency war room chat
-      if (coords) {
-        await pushLocationToChat(`alerts/${alertId}`, coords);
-        // 3. Automated targeted alert to the Primary Guardian
+      if (finalCoords) {
+        // 3. Update War Room
+        await pushLocationToChat(`alerts/${alertId}`, finalCoords);
+        // 4. Force immediate direct message to Primary Guardian
         if (settings.primaryGuardianEmail) {
-          await sendLocationDirect(coords);
+          await sendLocationDirect(finalCoords);
         }
       }
-    } catch (e) { setErrorMsg("SOS Link Failed."); }
+    } catch (e) { 
+      setErrorMsg("SOS Protocol Failed to Sync."); 
+      isTriggeringRef.current = false;
+    }
   };
 
   const toggleGuard = () => {
