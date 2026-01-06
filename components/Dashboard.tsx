@@ -3,7 +3,10 @@ import { GoogleGenAI } from "@google/genai";
 import {
   Activity,
   ChevronRight,
+  ExternalLink,
   Globe,
+  MapPin,
+  Navigation,
   Power,
   ShieldAlert,
   Timer,
@@ -36,7 +39,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   const watchIdRef = useRef<number>(-1);
-  const timerRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
 
   // Helper for location sharing
@@ -59,18 +61,39 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // GPS & Voice Trigger Logic
   useEffect(() => {
-    if (settings.isListening || externalActiveAlertId) {
-      watchIdRef.current = startLocationWatch(
-        (c: GuardianCoords) => {
-          setCoords(c);
-          if (externalActiveAlertId) set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
-        },
-        (err: string) => setErrorMsg(err)
-      );
-    } else {
-      if (watchIdRef.current !== -1) stopLocationWatch(watchIdRef.current);
+    // Start watching location immediately on dashboard mount for "Live Location" display
+    watchIdRef.current = startLocationWatch(
+      (c: GuardianCoords) => {
+        setCoords(c);
+        if (externalActiveAlertId) {
+          set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
+        }
+      },
+      (err: string) => setErrorMsg(err)
+    );
+
+    // Re-initialize voice recognition if listening state changes
+    if (settings.isListening) {
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SR && !recognitionRef.current) {
+        const recognition = new SR();
+        recognition.continuous = true;
+        recognition.onresult = (e: any) => {
+          const t = Array.from(e.results).map((r: any) => r[0].transcript).join('').toLowerCase();
+          if (t.includes(settings.triggerPhrase.toLowerCase())) triggerSOS("Voice Alert");
+        };
+        recognition.start();
+        recognitionRef.current = recognition;
+      }
+    } else if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
-    return () => stopLocationWatch(watchIdRef.current);
+
+    return () => {
+      if (watchIdRef.current !== -1) stopLocationWatch(watchIdRef.current);
+      if (recognitionRef.current) recognitionRef.current.stop();
+    };
   }, [settings.isListening, externalActiveAlertId]);
 
   const triggerSOS = async (reason: string) => {
@@ -90,23 +113,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const toggleGuard = () => {
-    if (settings.isListening) {
-      if (recognitionRef.current) recognitionRef.current.stop();
-      updateSettings({ isListening: false });
-    } else {
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SR) {
-        const recognition = new SR();
-        recognition.continuous = true;
-        recognition.onresult = (e: any) => {
-          const t = Array.from(e.results).map((r: any) => r[0].transcript).join('').toLowerCase();
-          if (t.includes(settings.triggerPhrase.toLowerCase())) triggerSOS("Voice Alert");
-        };
-        recognition.start();
-        recognitionRef.current = recognition;
-      }
-      updateSettings({ isListening: true });
-    }
+    updateSettings({ isListening: !settings.isListening });
   };
 
   const findSafeSpots = async () => {
@@ -116,7 +123,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: `Locate safety zones such as police stations and hospitals near latitude ${coords.lat}, longitude ${coords.lng}.`,
         config: {
           tools: [{ googleMaps: {} }],
@@ -187,6 +194,49 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
+      {/* NEW: Live Telemetry Widget */}
+      <div className="glass p-5 rounded-[2.5rem] border border-white/5 relative overflow-hidden shadow-2xl">
+        <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+           <MapPin size={120} />
+        </div>
+        <div className="flex items-center justify-between mb-5">
+           <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500">
+                 <Navigation size={18} />
+              </div>
+              <div>
+                <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Live Telemetry</h3>
+                <div className="flex items-center gap-2 mt-0.5">
+                   <div className={`w-1.5 h-1.5 rounded-full ${coords ? 'bg-green-500 animate-pulse' : 'bg-slate-700'}`} />
+                   <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                      {coords ? 'Secure Signal Locked' : 'Searching for Satellites...'}
+                   </span>
+                </div>
+              </div>
+           </div>
+           {coords && (
+             <a 
+               href={`https://www.google.com/maps?q=${coords.lat},${coords.lng}`}
+               target="_blank" rel="noopener noreferrer"
+               className="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-600/20 active:scale-95 transition-all"
+             >
+               <ExternalLink size={14} />
+             </a>
+           )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+           <div className="bg-slate-900/50 p-4 rounded-2xl border border-white/5">
+              <span className="text-[7px] font-black text-slate-600 uppercase tracking-widest block mb-1">Latitude</span>
+              <span className="text-sm font-bold text-white mono">{coords ? coords.lat.toFixed(6) : '---.------'}</span>
+           </div>
+           <div className="bg-slate-900/50 p-4 rounded-2xl border border-white/5">
+              <span className="text-[7px] font-black text-slate-600 uppercase tracking-widest block mb-1">Longitude</span>
+              <span className="text-sm font-bold text-white mono">{coords ? coords.lng.toFixed(6) : '---.------'}</span>
+           </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
         <div className="glass p-5 rounded-[2rem] border border-white/5">
           <Timer size={18} className="text-blue-500 mb-3" />
@@ -219,6 +269,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           {safeSpots.length === 0 && <p className="text-center text-[9px] text-slate-600 uppercase font-black py-4">No local nodes found</p>}
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[10px] font-bold text-amber-500 uppercase tracking-widest text-center animate-pulse">
+           {errorMsg}
+        </div>
+      )}
     </div>
   );
 };
