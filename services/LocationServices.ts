@@ -3,22 +3,22 @@ import { GuardianCoords } from '../types';
 
 /**
  * Initiates a high-precision location watch.
- * Uses enableHighAccuracy: true to force GPS satellite usage over network triangulation.
- * Sets maximumAge: 0 to bypass cached location data.
+ * Enforces PRIORITY_HIGH_ACCURACY by setting enableHighAccuracy to true
+ * and disabling caching (maximumAge: 0) to ensure data is fresh from GPS satellites.
  */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
   onError: (message: string) => void
 ): number {
   if (!navigator.geolocation) {
-    onError("Hardware Error: GPS is not supported by this device.");
+    onError("GPS Hardware Missing");
     return -1;
   }
 
   const options: PositionOptions = {
     enableHighAccuracy: true,
     timeout: 10000, 
-    maximumAge: 0 
+    maximumAge: 0 // Prevents using cached network locations
   };
 
   const watchId = navigator.geolocation.watchPosition(
@@ -36,13 +36,13 @@ export function startLocationWatch(
       let msg = "GPS Signal Error";
       switch (error.code) {
         case error.PERMISSION_DENIED:
-          msg = "Location Access Denied. Check System Permissions.";
+          msg = "GPS Permission Denied";
           break;
         case error.POSITION_UNAVAILABLE:
-          msg = "Satellite Signal Lost. Check GPS settings.";
+          msg = "Satellite Fix Lost";
           break;
         case error.TIMEOUT:
-          msg = "GPS Acquisition Timeout. Retrying...";
+          msg = "GPS Signal Timeout";
           break;
       }
       onError(msg);
@@ -54,7 +54,8 @@ export function startLocationWatch(
 }
 
 /**
- * Single-shot fresh coordinate capture for emergency events.
+ * Captures a single, high-accuracy coordinate fix immediately.
+ * Primarily used for SOS locking.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
@@ -73,11 +74,7 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
         timestamp: pos.timestamp
       }),
       (err) => reject(err),
-      { 
-        enableHighAccuracy: true, 
-        timeout: 5000, 
-        maximumAge: 0 
-      }
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
     );
   });
 }
