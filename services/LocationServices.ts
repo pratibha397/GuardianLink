@@ -2,23 +2,28 @@
 import { GuardianCoords } from '../types';
 
 /**
- * SOS_PRIORITY_OPTIONS: Extremely aggressive timeouts for emergency dispatch.
+ * Stage 1: Fast Cache Retrieval (resolve in < 1s)
  */
-const SOS_FAST_CACHE: PositionOptions = {
+const CACHE_FETCH_OPTIONS: PositionOptions = {
   enableHighAccuracy: false,
-  timeout: 1500,      // 1.5s limit for cached data
-  maximumAge: 600000  // 10 minutes cache acceptable for emergency start
+  timeout: 1000,
+  maximumAge: 300000 // 5 mins cache
 };
 
-const SOS_HIGH_ACCURACY: PositionOptions = {
+/**
+ * Stage 2: Satellite Lock (resolve in < 4s)
+ */
+const SATELLITE_LOCK_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
-  timeout: 5000,      // 5s limit for fresh satellite lock
+  timeout: 4000,
   maximumAge: 0
 };
 
 /**
- * Persistent Location Stream for UI Telemetry.
+ * Shared coordinates for instant fallback
  */
+let lastCapturedCoords: GuardianCoords | null = null;
+
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
   onError: (message: string) => void
@@ -30,90 +35,92 @@ export function startLocationWatch(
 
   return navigator.geolocation.watchPosition(
     (position) => {
-      onUpdate({
+      const c = {
         lat: position.coords.latitude,
         lng: position.coords.longitude,
         accuracy: position.coords.accuracy,
-        speed: position.coords.speed,
-        heading: position.coords.heading,
         timestamp: position.timestamp
-      });
+      };
+      lastCapturedCoords = c;
+      onUpdate(c);
     },
     (error) => {
-      let msg = "GPS Signal Error";
-      if (error.code === error.PERMISSION_DENIED) msg = "Location Access Denied";
-      onError(msg);
+      onError("Satellite Signal Weak");
     },
     { enableHighAccuracy: true, maximumAge: 5000 }
   );
 }
 
 /**
- * Immediate SOS Coordinate Acquisition.
- * Priority 1: Instant Cached Location (resolve in < 1.5s).
- * Priority 2: Fresh satellite lock (resolve in < 5s).
- * Guaranteed to return coordinates if ANY source is available.
+ * Robust SOS Coordinate Resolver.
+ * Guaranteed resolution with best-available data or failure after 5 seconds.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error("No GPS Hardware Detected"));
+      reject(new Error("No GPS Hardware"));
       return;
     }
 
-    let resolved = false;
+    let isDone = false;
 
-    // Fast-path: Try cached location immediately
+    const finalize = (coords: GuardianCoords, source: string) => {
+      if (isDone) return;
+      isDone = true;
+      console.log(`SOS Location sourced from: ${source}`);
+      resolve(coords);
+    };
+
+    // 1. Check last captured (Instant)
+    if (lastCapturedCoords) {
+      finalize(lastCapturedCoords, "Watch Stream Cache");
+    }
+
+    // 2. Try Browser Cache (Fallback)
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (!resolved) {
-          resolved = true;
-          console.log("SOS: Using cached coordinates for speed.");
-          resolve({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            timestamp: pos.timestamp
-          });
-        }
-      },
-      () => console.warn("SOS: No cached coordinates found."),
-      SOS_FAST_CACHE
+      (pos) => finalize({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        timestamp: pos.timestamp
+      }, "Browser Cache"),
+      () => console.warn("Cache fetch failed"),
+      CACHE_FETCH_OPTIONS
     );
 
-    // Precision-path: Request fresh lock in parallel
+    // 3. Try Fresh Satellite Lock (Precision)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => finalize({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        timestamp: pos.timestamp
+      }, "Fresh Satellite Fix"),
+      (err) => {
+        if (!isDone) {
+          if (lastCapturedCoords) {
+            finalize(lastCapturedCoords, "Critical Fallback to Last Known");
+          } else {
+            reject(new Error("Unable to establish GPS link."));
+          }
+        }
+      },
+      SATELLITE_LOCK_OPTIONS
+    );
+
+    // 4. Force Timeout Safety
     setTimeout(() => {
-      if (!resolved) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            if (!resolved) {
-              resolved = true;
-              console.log("SOS: High-accuracy satellite lock achieved.");
-              resolve({
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude,
-                accuracy: pos.coords.accuracy,
-                speed: pos.coords.speed,
-                heading: pos.coords.heading,
-                timestamp: pos.timestamp
-              });
-            }
-          },
-          (err) => {
-            if (!resolved) {
-              resolved = true;
-              reject(new Error("SOS ERROR: Satellite link failed. Check your environment."));
-            }
-          },
-          SOS_HIGH_ACCURACY
-        );
+      if (!isDone) {
+        if (lastCapturedCoords) {
+          finalize(lastCapturedCoords, "Watch Stream Timeout Fallback");
+        } else {
+          reject(new Error("GPS Link Timeout."));
+        }
       }
-    }, 100); 
+    }, 5500);
   });
 }
 
 export function stopLocationWatch(watchId: number): void {
-  if (watchId !== -1) {
-    navigator.geolocation.clearWatch(watchId);
-  }
+  if (watchId !== -1) navigator.geolocation.clearWatch(watchId);
 }
