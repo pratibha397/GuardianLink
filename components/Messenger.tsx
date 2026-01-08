@@ -1,6 +1,8 @@
+
 import {
   ArrowLeft,
-  ExternalLink, MapPin,
+  ExternalLink,
+  MapPin,
   MessageCircle,
   MessageSquare,
   MoreVertical,
@@ -12,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { DataSnapshot, onValue, push, ref, rtdb } from '../services/firebase';
-import { getPreciseCurrentPosition } from '../services/LocationService';
+import { getPreciseCurrentPosition } from '../services/LocationServices';
 import { AppSettings, ChatMessage, EmergencyContact, GuardianCoords, User } from '../types';
 
 interface MessengerProps {
@@ -287,7 +289,7 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
         <form onSubmit={sendMessage} className="flex gap-3 items-center">
           <div className="flex-1 relative">
             <input 
-              type="text" value={text} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setText(e.target.value)}
+              type="text" value={text} onChange={(e) => setText(e.target.value)}
               placeholder="Message Guardian..." 
               className="w-full bg-slate-900 border border-white/10 rounded-3xl px-6 py-4 text-sm text-white outline-none focus:border-blue-500 shadow-inner placeholder:text-slate-700"
             />

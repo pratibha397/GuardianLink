@@ -22,9 +22,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem('guardian_user');
-      const isAuth = localStorage.getItem('isAuthenticated');
-      // Require both user object and auth flag
-      return (saved && isAuth === 'true') ? JSON.parse(saved) : null;
+      return saved ? JSON.parse(saved) : null;
     } catch {
       return null;
     }
@@ -195,7 +193,6 @@ const App: React.FC = () => {
   const handleLogout = () => {
     auth.signOut().catch(() => {});
     localStorage.clear();
-    localStorage.removeItem('isAuthenticated');
     setUser(null);
     setSettings(DEFAULT_SETTINGS);
     setAppView(AppView.DASHBOARD);
@@ -207,7 +204,6 @@ const App: React.FC = () => {
         onLogin={(u: User) => { 
           setUser(u); 
           localStorage.setItem('guardian_user', JSON.stringify(u)); 
-          localStorage.setItem('isAuthenticated', 'true');
         }} 
       />
     );

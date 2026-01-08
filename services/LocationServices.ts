@@ -18,13 +18,7 @@ export function startLocationWatch(
     return -1;
   }
 
-  // OPTIMIZATION: Check if we already have a coordinate in memory to fire immediately.
-  // This prevents the UI from showing "---" when switching views.
-  if (lastCapturedCoords) {
-    onUpdate(lastCapturedCoords);
-  }
-
-  // Using standard high accuracy options but allowing cached data for speed
+  // Using standard high accuracy options
   return navigator.geolocation.watchPosition(
     (position) => {
       const c = {
@@ -35,8 +29,6 @@ export function startLocationWatch(
         heading: position.coords.heading,
         timestamp: position.timestamp
       };
-      
-      // Update cache
       lastCapturedCoords = c;
       onUpdate(c);
     },
@@ -44,27 +36,15 @@ export function startLocationWatch(
       console.warn("Watch stream signal dip:", error.message);
       // Do not hard fail on temporary signal loss during watch
     },
-    { 
-      enableHighAccuracy: true, 
-      maximumAge: 30000, // CRITICAL FIX: Allow positions up to 30s old to display INSTANTLY
-      timeout: 20000 
-    }
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
   );
 }
 
 /**
  * Robust SOS Coordinate Resolver.
  * Fixes "Signal Lost" bug by using standard timeouts and fallback logic.
- * OPTIMIZED: Returns immediately if cache is available.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
-  // FAST PATH: If we have a recent location from the watcher, return it immediately.
-  // This eliminates the 5-10s delay when triggering SOS if the app is already open.
-  if (lastCapturedCoords) {
-    console.log("SOS Location: Using Instant Memory Cache");
-    return lastCapturedCoords;
-  }
-
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error("No GPS Hardware"));
@@ -88,12 +68,20 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
       },
       (err) => {
         console.warn("GPS Lock Failed:", err.message);
-        reject(new Error("Signal Lost: Unable to acquire location."));
+        
+        // Fallback: If fresh lock fails, use the last known watched position
+        if (lastCapturedCoords) {
+          console.log("SOS Location: Using Cached Fallback");
+          resolve(lastCapturedCoords);
+        } else {
+          // Absolute failure scenario
+          reject(new Error("Signal Lost: Unable to acquire location."));
+        }
       },
       { 
         enableHighAccuracy: true, 
-        timeout: 15000, 
-        maximumAge: 60000 // Accept anything from the last minute if we are desperate
+        timeout: 10000, // 10s gives GPS enough time to warm up
+        maximumAge: 10000 // Accept positions up to 10s old for speed
       }
     );
   });

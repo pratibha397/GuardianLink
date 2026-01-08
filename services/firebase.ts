@@ -24,6 +24,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  getFirestore,
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
@@ -57,8 +58,7 @@ try {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
   });
 } catch (e) {
-  // If offline persistence fails (e.g. privacy restrictions), initialize with default settings
-  firestoreInstance = initializeFirestore(app, {});
+  firestoreInstance = getFirestore(app);
 }
 export const db = firestoreInstance;
 
