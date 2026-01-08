@@ -5,7 +5,7 @@ import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
-import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
+import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc, signOut } from './services/firebase';
 import { AlertLog, AppSettings, AppView, ChatMessage, EmergencyContact, User } from './types';
 
 const SETTINGS_KEY = 'guardian_link_v4';
@@ -200,7 +200,8 @@ const App: React.FC = () => {
   }, [activeAlertId]);
 
   const handleLogout = () => {
-    auth.signOut().catch(() => {});
+    // Use modular signOut
+    signOut(auth).catch(() => {});
     localStorage.clear();
     localStorage.removeItem('isAuthenticated');
     setUser(null);
