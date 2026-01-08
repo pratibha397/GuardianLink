@@ -61,23 +61,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   });
   const [timeLeftStr, setTimeLeftStr] = useState("");
 
-  // Refs to avoid stale closures in Timer/Interval
-  const userRef = useRef(user);
-  const settingsRef = useRef(settings);
-  
-  useEffect(() => {
-    userRef.current = user;
-    settingsRef.current = settings;
-  }, [user, settings]);
-
   // Resilient SOS Trigger
   const triggerSOS = async (reason: string) => {
     setErrorMsg("DISPATCHING SOS SIGNAL...");
     
-    // Use refs if called from timer to ensure fresh data
-    const currentUser = userRef.current;
-    const currentSettings = settingsRef.current;
-
     let loc: GuardianCoords | null = null;
     let gpsErrorString: string | null = null;
 
@@ -92,7 +79,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     try {
-      const guardians = currentSettings.contacts || [];
+      const guardians = settings.contacts || [];
       if (guardians.length === 0) throw new Error("Add contacts in Settings to enable SOS.");
 
       const timestamp = Date.now();
@@ -105,15 +92,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       const alertMessage = `🚨 EMERGENCY ALERT: ${locationText} - ${reason} 🚨`;
 
       const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
-        const sorted = [currentUser.email.toLowerCase(), guardian.email.toLowerCase()].sort();
+        const sorted = [user.email.toLowerCase(), guardian.email.toLowerCase()].sort();
         const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
         const combinedId = `${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
         
         return push(ref(rtdb, `direct_chats/${combinedId}/updates`), {
           id: `sos_${timestamp}_${guardian.id}`,
           type: 'location',
-          senderName: currentUser.name,
-          senderEmail: currentUser.email.toLowerCase(),
+          senderName: user.name,
+          senderEmail: user.email.toLowerCase(),
           text: alertMessage,
           lat: loc?.lat || 0,
           lng: loc?.lng || 0,
@@ -122,11 +109,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       await Promise.all(broadcastTasks);
 
-      const alertId = `alert_${currentUser.id}_${timestamp}`;
+      const alertId = `alert_${user.id}_${timestamp}`;
       const log: AlertLog = {
         id: alertId, 
-        senderEmail: currentUser.email, 
-        senderName: currentUser.name,
+        senderEmail: user.email, 
+        senderName: user.name,
         timestamp: timestamp, 
         location: loc, 
         message: reason, 
@@ -136,29 +123,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
 
-      // Check specific outcomes
       if (!loc) {
-        setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. ENABLE BROWSER LOCATION PERMISSIONS.");
+        setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. ENABLE PERMISSIONS FOR BETTER ACCURACY.");
       } else {
         setErrorMsg(null);
       }
 
     } catch (err: any) {
       console.error("Critical SOS Failure:", err);
-      // Cleanly distinguish between GPS errors (already handled above) and DB errors
-      if (err.code === 'PERMISSION_DENIED' || (err.message && err.message.toLowerCase().includes("permission denied"))) {
-         setErrorMsg("⚠️ FAILED: DATABASE ACCESS DENIED. CHECK FIREBASE RULES/AUTH.");
-      } else {
-         setErrorMsg("⚠️ ALERT FAILED: " + (err.message || "Unknown Error"));
-      }
+      setErrorMsg(err.message || "SOS Failed.");
     }
   };
-
-  // Keep a ref to the trigger function so setInterval calls the latest version
-  const triggerSOSRef = useRef(triggerSOS);
-  useEffect(() => {
-    triggerSOSRef.current = triggerSOS;
-  });
 
   // Timer Logic
   useEffect(() => {
@@ -183,8 +158,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       
       if (diff <= 0) {
         setTimerTarget(null);
-        // Call via ref to avoid stale closure
-        triggerSOSRef.current("SAFETY TIMER EXPIRED - USER DID NOT CHECK IN");
+        triggerSOS("SAFETY TIMER EXPIRED - USER DID NOT CHECK IN");
       } else {
         const m = Math.floor(diff / 60);
         const s = diff % 60;
@@ -193,7 +167,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [timerTarget, settings.isTimerActive, updateSettings]);
+  }, [timerTarget, settings.isTimerActive]);
 
   const startTimer = (minutes: number) => {
     if (minutes <= 0) return;
@@ -232,6 +206,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   useEffect(() => {
+    // Only attempt to watch location if we haven't already errored out permanently
+    // But we try anyway to see if permissions were granted later
     watchIdRef.current = startLocationWatch((c: GuardianCoords) => {
       setCoords(c);
       if (externalActiveAlertId) {
@@ -239,6 +215,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       findSafeSpots(c.lat, c.lng);
     }, (err: string) => {
+      // Silent fail on watch, we only show error on explicit action
       console.warn("Background GPS Watch:", err);
     });
     
@@ -293,7 +270,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 placeholder="Custom Minutes"
                 value={customTimerMinutes}
                 onChange={(e) => setCustomTimerMinutes(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-2xl py-3 px-4 text-sm text-white font-bold outline-none focus:border-blue-500"
+                className="w-full bg-slate-950 border border-white/10 rounded-2xl py-3 px-4 text-sm text-white font-bold outline-none focus:border-blue-500"
               />
               {customTimerMinutes && (
                 <button 

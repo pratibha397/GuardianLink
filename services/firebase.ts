@@ -1,23 +1,38 @@
 
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import {
+  createUserWithEmailAndPassword,
   getAuth,
-  signInAnonymously,
-  signOut
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  updateProfile,
+  type Auth
 } from "firebase/auth";
 import {
-  DataSnapshot,
   getDatabase,
   onValue,
   push,
   ref,
-  set
+  set,
+  update,
+  type DataSnapshot,
+  type Database
 } from "firebase/database";
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
-  setDoc
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  type Firestore
 } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -30,21 +45,26 @@ const firebaseConfig = {
   measurementId: process.env.FIREBASE_MEASUREMENT_ID || ""
 };
 
-// Singleton initialization pattern for v9+
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Singleton initialization
+const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize services
-const auth = getAuth(app);
-const db = getFirestore(app);
-const rtdb = getDatabase(app);
+// Explicitly pass app to all services to prevent "Component not registered" errors
+export const auth: Auth = getAuth(app);
+export const rtdb: Database = getDatabase(app);
 
-// Export instances and modular functions
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+} catch (e) {
+  firestoreInstance = getFirestore(app);
+}
+export const db = firestoreInstance;
+
 export {
-  app,
-  auth,
-  db, doc,
-  getDoc, onValue, push, ref, rtdb, set, setDoc, signInAnonymously,
-  signOut
+  collection, createUserWithEmailAndPassword, doc,
+  getDoc, getDocs, onAuthStateChanged, onValue, push, query, ref, sendPasswordResetEmail, set, setDoc, signInWithEmailAndPassword, update, updateDoc, updateProfile, where
 };
 export type { DataSnapshot };
-
+export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
