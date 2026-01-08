@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowRight, CheckCircle2, ChevronLeft, KeyRound, Lock, Mail, RefreshCw, Shield } from 'lucide-react';
+import { AlertCircle, ArrowRight, CheckCircle2, ChevronLeft, KeyRound, Lock, LogIn, Mail, RefreshCw, Shield } from 'lucide-react';
 import { useState } from 'react';
 import { AuthService } from '../services/AuthenticationService';
 import { User } from '../types';
@@ -7,14 +7,19 @@ interface AuthScreenProps {
   onLogin: (user: User) => void;
 }
 
-type AuthStep = 'LOGIN' | 'VERIFY_LOGIN_OTP' | 'FORGOT_PASSWORD_EMAIL' | 'FORGOT_PASSWORD_OTP' | 'RESET_PASSWORD';
+type AuthStep = 'LOGIN' | 'FORGOT_PASSWORD_EMAIL' | 'FORGOT_PASSWORD_OTP' | 'RESET_PASSWORD';
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [step, setStep] = useState<AuthStep>('LOGIN');
+  
+  // Form State
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
+  
+  // UI State
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -25,32 +30,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     setLoading(false);
   };
 
-  const handleSendLoginOTP = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.includes('@')) {
-      setError("Please enter a valid email.");
-      return;
-    }
-    clearState();
-    setLoading(true);
-    try {
-      await AuthService.sendLoginOTP(email);
-      setStep('VERIFY_LOGIN_OTP');
-      setSuccessMsg(`OTP sent to ${email}`);
-    } catch (err) {
-      setError("Failed to send OTP.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyLoginOTP = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     clearState();
     setLoading(true);
     try {
-      const isValid = await AuthService.verifyLoginOTP(otp);
-      if (isValid) {
+      const success = await AuthService.login(email, password);
+      if (success) {
         // Create mock user
         const mockUser: User = {
           id: `user_${Date.now()}`,
@@ -59,10 +45,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         };
         onLogin(mockUser);
       } else {
-        setError("Invalid OTP. Try 123456.");
+        setError("Invalid credentials. Try user@test.com / password");
       }
     } catch (err) {
-      setError("Verification failed.");
+      setError("Login failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -92,8 +78,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     clearState();
     setLoading(true);
     try {
-      // Re-using verify logic or specific reset logic
-      const isValid = await AuthService.verifyLoginOTP(otp); // Using same mock OTP '123456'
+      const isValid = await AuthService.verifyResetOTP(otp);
       if (isValid) {
         setStep('RESET_PASSWORD');
         setSuccessMsg("Code verified. Set new password.");
@@ -123,6 +108,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       await AuthService.resetPassword(newPass);
       setStep('LOGIN');
       setSuccessMsg("Password updated! Please login.");
+      // Reset forms
+      setPassword('');
       setOtp('');
       setNewPass('');
       setConfirmPass('');
@@ -137,57 +124,41 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     switch (step) {
       case 'LOGIN':
         return (
-          <form onSubmit={handleSendLoginOTP} className="space-y-6 animate-in fade-in slide-in-from-right duration-300">
+          <form onSubmit={handleLogin} className="space-y-6 animate-in fade-in slide-in-from-right duration-300">
             <div className="space-y-2 text-center mb-8">
               <h2 className="text-xl font-bold text-white">Welcome Back</h2>
-              <p className="text-xs text-slate-500 font-medium">Enter your email to access GuardianLink</p>
+              <p className="text-xs text-slate-500 font-medium">Sign in to access GuardianLink</p>
             </div>
-            <div className="relative group">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
-              <input 
-                type="email" required placeholder="Email Address" value={email} 
-                onChange={(e) => setEmail(e.target.value)} 
-                className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
-              />
+            
+            <div className="space-y-4">
+              <div className="relative group">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
+                <input 
+                  type="email" required placeholder="Email Address" value={email} 
+                  onChange={(e) => setEmail(e.target.value)} 
+                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
+                />
+              </div>
+              <div className="relative group">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
+                <input 
+                  type="password" required placeholder="Password" value={password} 
+                  onChange={(e) => setPassword(e.target.value)} 
+                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
+                />
+              </div>
             </div>
+
             <button 
               type="submit" disabled={loading} 
               className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Send Login OTP'} <ArrowRight size={16} />
+              {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Sign In'} <LogIn size={16} />
             </button>
+            
             <div className="text-center">
               <button type="button" onClick={() => { clearState(); setStep('FORGOT_PASSWORD_EMAIL'); }} className="text-xs font-bold text-slate-500 hover:text-blue-500 transition-colors">
                 Forgot Password?
-              </button>
-            </div>
-          </form>
-        );
-
-      case 'VERIFY_LOGIN_OTP':
-        return (
-          <form onSubmit={handleVerifyLoginOTP} className="space-y-6 animate-in fade-in slide-in-from-right duration-300">
-            <div className="space-y-2 text-center mb-8">
-              <h2 className="text-xl font-bold text-white">Verify Identity</h2>
-              <p className="text-xs text-slate-500 font-medium">Enter the code sent to {email}</p>
-            </div>
-            <div className="relative group">
-              <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
-              <input 
-                type="text" required placeholder="Enter OTP (123456)" value={otp} 
-                onChange={(e) => setOtp(e.target.value)} 
-                className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all tracking-widest" 
-              />
-            </div>
-            <button 
-              type="submit" disabled={loading} 
-              className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-               {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Verify & Login'} <CheckCircle2 size={16} />
-            </button>
-            <div className="text-center">
-              <button type="button" onClick={() => { clearState(); setStep('LOGIN'); }} className="text-xs font-bold text-slate-500 hover:text-white transition-colors flex items-center justify-center gap-1 mx-auto">
-                <ChevronLeft size={14} /> Back to Login
               </button>
             </div>
           </form>
@@ -241,7 +212,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               type="submit" disabled={loading} 
               className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
-               {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Verify Code'} <CheckCircle2 size={16} />
+               {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Verify OTP'} <CheckCircle2 size={16} />
             </button>
             <div className="text-center">
               <button type="button" onClick={() => { clearState(); setStep('FORGOT_PASSWORD_EMAIL'); }} className="text-xs font-bold text-slate-500 hover:text-white transition-colors flex items-center justify-center gap-1 mx-auto">
