@@ -18,7 +18,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { AzureMapsService } from '../services/AzureMapService';
 import GuardianService from '../services/GuardianService';
-import { startLocationWatch, stopLocationWatch } from '../services/LocationServices'; // Removed getPreciseCurrentPosition
+import { startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
 
@@ -60,38 +60,50 @@ const Dashboard: React.FC<DashboardProps> = ({
   });
   const [timeLeftStr, setTimeLeftStr] = useState("");
 
-  // --- OPTIMIZED SOS TRIGGER START ---
+  // --- NUCLEAR FIX SOS TRIGGER START ---
   const triggerSOS = async (reason: string) => {
+    // Helper to show notification with fallback
+    const forceAlert = (title: string, body: string) => {
+      // 1. Try OS Notification
+      if (Notification.permission === "granted") {
+        try {
+          new Notification(title, { body });
+        } catch (e) {
+          console.warn("OS Notification failed, falling back to alert", e);
+          // 2. Fallback: Browser Popup (Guaranteed to work)
+          alert(`🚨 ${title}\n\n${body}`);
+        }
+      } else {
+        // 3. If permission denied/default, use Browser Popup
+        alert(`🚨 ${title}\n\n${body}\n\n(Notifications blocked, using popup)`);
+      }
+    };
+
     setErrorMsg("DISPATCHING SOS SIGNAL...");
-    
+
     // 1. HTTPS CHECK
     if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      alert("⚠️ SECURITY ERROR: You are not using HTTPS.\n\nMobile browsers block Location & Notifications on insecure HTTP.\n\nYou must test this on HTTPS (e.g., Vercel, Netlify, or ngrok).");
+      alert("🔒 SECURITY ERROR: You are on HTTP.\n\nFeatures disabled. Use HTTPS.");
     }
 
-    // 2. NOTIFICATION CHECK
-    let notifPermission = Notification.permission;
-    if (notifPermission === 'default') {
-      notifPermission = await Notification.requestPermission();
-    }
-    if (notifPermission === 'denied') {
-      alert("❌ NOTIFICATIONS BLOCKED!\n\nCheck browser settings (Lock Icon) to Allow Notifications.");
+    // 2. NOTIFICATION PERMISSION
+    if (Notification.permission !== 'granted') {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        console.log("Notification permission not granted");
+      }
     }
 
-    // 3. FAST GPS LOCATION FETCH
-    // Defined here to strictly control timeout
+    // 3. FAST GPS (5 Second Timeout)
     const getFastLocation = (): Promise<GeolocationPosition> => {
       return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(new Error("Geolocation not supported"));
-          return;
-        }
+        if (!navigator.geolocation) reject(new Error("No GPS"));
         navigator.geolocation.getCurrentPosition(
           resolve, 
           reject, 
           {
-            enableHighAccuracy: true, 
-            timeout: 10000, // 10 second timeout (Fixes "Slow" issue)
+            enableHighAccuracy: false, // False = Faster (Wi-Fi), True = Slower (GPS)
+            timeout: 5000,             // 5 seconds max wait
             maximumAge: 0
           }
         );
@@ -106,31 +118,29 @@ const Dashboard: React.FC<DashboardProps> = ({
       loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       setCoords(loc);
     } catch (gpsErr: any) {
-      console.error("GPS Error:", gpsErr);
-      
+      console.error("GPS Failure:", gpsErr);
       if (gpsErr.code === 1) {
-        alert("❌ GPS PERMISSION DENIED!\n\nYou clicked 'Block' previously.\n\nTo fix:\n1. Click the Lock/Info icon in your URL bar.\n2. Reset 'Location' to 'Allow'.\n3. Refresh page.");
-        gpsErrorString = "GPS Permission Denied";
-      } else if (gpsErr.code === 3) {
-        // TIMEOUT
-        alert("⚠️ GPS TIMEOUT (10s).\n\nCould not get a signal fast enough. Sending SOS without location.");
-        gpsErrorString = "GPS Timeout (No Signal)";
+        alert("❌ GPS PERMISSION DENIED!\n\nReset in browser settings (Lock Icon).");
+        gpsErrorString = "GPS Denied";
       } else {
-        gpsErrorString = "GPS Error";
+        // Timeout or other error
+        console.warn("GPS Timed out or failed. Sending without location.");
+        gpsErrorString = "GPS Timeout";
       }
     }
 
     try {
       const guardians = settings.contacts || [];
-      if (guardians.length === 0) throw new Error("Add contacts in Settings to enable SOS.");
+      if (guardians.length === 0) throw new Error("Add contacts in Settings.");
 
       const timestamp = Date.now();
       const locationText = loc 
         ? `[${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}]` 
-        : `[UNKNOWN LOCATION - ${gpsErrorString}]`;
+        : `[UNKNOWN LOCATION]`;
         
       const alertMessage = `🚨 EMERGENCY ALERT: ${locationText} - ${reason} 🚨`;
 
+      // Send to Firebase
       const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
         const sorted = [user.email.toLowerCase(), guardian.email.toLowerCase()].sort();
         const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
@@ -149,6 +159,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       await Promise.all(broadcastTasks);
 
+      // Update Global Alert Log
       const alertId = `alert_${user.id}_${timestamp}`;
       const log: AlertLog = {
         id: alertId, 
@@ -163,22 +174,21 @@ const Dashboard: React.FC<DashboardProps> = ({
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
 
-      // 4. SHOW LOCAL NOTIFICATION
-      if (notifPermission === 'granted') {
-        new Notification("🚨 AEGIS SOS SENT", {
-          body: `Reason: ${reason}\nLocation: ${loc ? `${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}` : "Location Unavailable"}`,
-          icon: "https://cdn-icons-png.flaticon.com/512/889/889647.png"
-        });
-      }
+      // --- TRIGGER VISUAL FEEDBACK (GUARANTEED) ---
+      forceAlert(
+        "SIGNAL DISPATCHED", 
+        `Reason: ${reason}\nLocation: ${loc ? `${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}` : "Unavailable"}`
+      );
 
       setErrorMsg(loc ? "✅ ALERT SENT WITH GPS" : "⚠️ ALERT SENT (NO GPS)");
 
     } catch (err: any) {
-      console.error("SOS Failure:", err);
+      console.error("SOS Failed:", err);
+      forceAlert("SOS FAILED", err.message || "Unknown error");
       setErrorMsg(err.message);
     }
   };
-  // --- OPTIMIZED SOS TRIGGER END ---
+  // --- NUCLEAR FIX SOS TRIGGER END ---
 
   // Timer Logic
   useEffect(() => {
@@ -189,7 +199,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
     if (!settings.isTimerActive) updateSettings({ isTimerActive: true });
-
     localStorage.setItem(TIMER_STORAGE_KEY, timerTarget.toString());
 
     const interval = setInterval(() => {
