@@ -16,9 +16,9 @@ import {
   X
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { AzureMapsService } from '../services/AzureMapsService';
+import { AzureMapsService } from '../services/AzureMapService';
 import GuardianService from '../services/GuardianService';
-import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
 
