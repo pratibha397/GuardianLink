@@ -89,32 +89,39 @@ export const AzureMapsService = {
       }).filter(Boolean) as (SafeSpot & { numericDist: number })[];
     };
 
-    // Strategy: Search 5km. If we don't have all 3 types, expand to 15km, then 30km.
-    // We want to ensure we find at least one of each if possible.
+    // Strategy: Start small (2km) to prioritize immediate vicinity.
+    // If we don't find all services, expand to 10km, then 30km.
     
     let allSpots: (SafeSpot & { numericDist: number })[] = [];
-    const radii = [5000, 15000, 30000];
+    const radii = [2000, 10000, 30000];
 
     for (const r of radii) {
       const elements = await fetchOverpass(r);
       const spots = processElements(elements);
       
-      // Merge into allSpots (avoiding duplicates by name+category)
+      // CRITICAL FIX: Sort raw spots by distance ASCENDING immediately.
+      // This ensures that if there are duplicates (e.g., "City Hospital" at 1km and 5km),
+      // we encounter the 1km one first and keep it during the merge step below.
+      spots.sort((a, b) => a.numericDist - b.numericDist);
+
+      // Merge into allSpots (deduplication logic)
       spots.forEach(s => {
+        // Only add if we don't already have a spot with this name+category
         if (!allSpots.some(existing => existing.name === s.name && existing.category === s.category)) {
           allSpots.push(s);
         }
       });
 
-      // Check if we have at least one of each
+      // Check if we have at least one of each category found so far
       const hasPolice = allSpots.some(s => s.category === 'Police');
       const hasHospital = allSpots.some(s => s.category === 'Hospital');
       const hasFire = allSpots.some(s => s.category === 'Fire Department');
 
+      // If we have all three, we can stop searching wider radii
       if (hasPolice && hasHospital && hasFire) break; 
     }
 
-    // Sort by distance overall
+    // Final Sort by distance to ensure the absolute nearest appear first in the generic list
     allSpots.sort((a, b) => a.numericDist - b.numericDist);
 
     // Extract the absolute nearest of each category to prioritize display
