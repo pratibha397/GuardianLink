@@ -1,6 +1,6 @@
 import { AlertCircle, ArrowRight, CheckCircle2, ChevronLeft, KeyRound, Lock, Mail, RefreshCw, Shield } from 'lucide-react';
 import { useState } from 'react';
-import { AuthService } from '../services/AuthService';
+import { AuthService } from '../services/AuthenticationService';
 import { User } from '../types';
 
 interface AuthScreenProps {
