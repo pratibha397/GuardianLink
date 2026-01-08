@@ -1,4 +1,3 @@
-
 import {
   AlertCircle,
   Building2,
@@ -61,21 +60,37 @@ const Dashboard: React.FC<DashboardProps> = ({
   });
   const [timeLeftStr, setTimeLeftStr] = useState("");
 
-  // Resilient SOS Trigger
+  // --- FIXED SOS TRIGGER START ---
   const triggerSOS = async (reason: string) => {
     setErrorMsg("DISPATCHING SOS SIGNAL...");
     
+    // 1. CHECK NOTIFICATION PERMISSION AGGRESSIVELY
+    let notifPermission = Notification.permission;
+    if (notifPermission !== 'granted') {
+      notifPermission = await Notification.requestPermission();
+    }
+
+    if (notifPermission === 'denied') {
+      alert("❌ NOTIFICATIONS BLOCKED!\n\nYou will NOT see alerts.\n\nHow to fix:\n1. Click the Lock (🔒) or Info (ℹ️) icon next to your URL bar.\n2. Change 'Notifications' to 'Allow'.\n3. Reload the page.");
+    }
+
     let loc: GuardianCoords | null = null;
     let gpsErrorString: string | null = null;
 
-    // 1. Try to get Location (Best Effort)
+    // 2. GET LOCATION
     try {
       loc = await getPreciseCurrentPosition();
       setCoords(loc);
     } catch (gpsErr: any) {
-      console.warn("SOS: GPS Failed, proceeding without location.", gpsErr);
-      gpsErrorString = gpsErr.message || "GPS Permission Denied";
-      // We do NOT stop the SOS. We proceed with null location.
+      console.warn("SOS: GPS Failed", gpsErr);
+      
+      // FIX: Specific alert for GPS Permission Denied
+      if (gpsErr.code === 1) {
+        alert("❌ GPS PERMISSION DENIED!\n\nSOS will send, but WITHOUT your location.\n\nHow to fix:\n1. Click the Lock (🔒) or Info (ℹ️) icon next to your URL bar.\n2. Change 'Location' to 'Allow'.\n3. Reload the page.");
+        gpsErrorString = "GPS Permission Denied";
+      } else {
+        gpsErrorString = gpsErr.message || "GPS Error";
+      }
     }
 
     try {
@@ -84,7 +99,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const timestamp = Date.now();
       
-      // 2. Prepare Payload
+      // 3. PREPARE PAYLOAD
       const locationText = loc 
         ? `[${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}]` 
         : `[UNKNOWN LOCATION - ${gpsErrorString || "GPS Failed"}]`;
@@ -123,17 +138,31 @@ const Dashboard: React.FC<DashboardProps> = ({
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
 
+      // 4. SHOW LOCAL NOTIFICATION (Only if allowed)
+      if (notifPermission === 'granted') {
+        try {
+          new Notification("🚨 AEGIS SOS SENT", {
+            body: `Reason: ${reason}\nLocation: ${loc ? `${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}` : "Location Unavailable"}`,
+            icon: "https://cdn-icons-png.flaticon.com/512/889/889647.png"
+          });
+        } catch (notifErr) {
+          console.error("Notification display error:", notifErr);
+        }
+      }
+
+      // 5. UI STATUS UPDATE
       if (!loc) {
-        setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. ENABLE PERMISSIONS FOR BETTER ACCURACY.");
+        setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. CHECK PERMISSIONS.");
       } else {
-        setErrorMsg(null);
+        setErrorMsg("✅ ALERT SENT SUCCESSFULLY");
       }
 
     } catch (err: any) {
       console.error("Critical SOS Failure:", err);
-      setErrorMsg(err.message || "SOS Failed.");
+      setErrorMsg("SOS FAILED: " + (err.message || "Unknown error"));
     }
   };
+  // --- FIXED SOS TRIGGER END ---
 
   // Timer Logic
   useEffect(() => {
@@ -146,7 +175,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
-    // Ensure WakeLock is active
     if (!settings.isTimerActive) {
       updateSettings({ isTimerActive: true });
     }
@@ -206,8 +234,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   useEffect(() => {
-    // Only attempt to watch location if we haven't already errored out permanently
-    // But we try anyway to see if permissions were granted later
     watchIdRef.current = startLocationWatch((c: GuardianCoords) => {
       setCoords(c);
       if (externalActiveAlertId) {
@@ -215,7 +241,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       findSafeSpots(c.lat, c.lng);
     }, (err: string) => {
-      // Silent fail on watch, we only show error on explicit action
       console.warn("Background GPS Watch:", err);
     });
     
