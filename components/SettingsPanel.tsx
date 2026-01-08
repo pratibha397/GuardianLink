@@ -1,4 +1,5 @@
 import { AlertCircle, CheckCircle2, Mic, Search, Star, Trash2, UserPlus, Wifi } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
 
