@@ -2,6 +2,7 @@
 import {
   AlertCircle,
   Building2,
+  CheckCircle2,
   ExternalLink,
   Flame,
   Globe,
@@ -53,43 +54,67 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Timer State
   const [showTimerModal, setShowTimerModal] = useState(false);
+  const [customTimerMinutes, setCustomTimerMinutes] = useState('');
   const [timerTarget, setTimerTarget] = useState<number | null>(() => {
     const saved = localStorage.getItem(TIMER_STORAGE_KEY);
     return saved ? parseInt(saved) : null;
   });
   const [timeLeftStr, setTimeLeftStr] = useState("");
 
+  // Resilient SOS Trigger
   const triggerSOS = async (reason: string) => {
     setErrorMsg("DISPATCHING SOS SIGNAL...");
+    
+    let loc: GuardianCoords | null = null;
+    let gpsErrorString: string | null = null;
+
+    // 1. Try to get Location (Best Effort)
     try {
-      const loc = await getPreciseCurrentPosition();
+      loc = await getPreciseCurrentPosition();
       setCoords(loc);
+    } catch (gpsErr: any) {
+      console.warn("SOS: GPS Failed, proceeding without location.", gpsErr);
+      gpsErrorString = gpsErr.message || "GPS Permission Denied";
+      // We do NOT stop the SOS. We proceed with null location.
+    }
+
+    try {
       const guardians = settings.contacts || [];
       if (guardians.length === 0) throw new Error("Add contacts in Settings to enable SOS.");
+
+      const timestamp = Date.now();
+      
+      // 2. Prepare Payload
+      const locationText = loc 
+        ? `[${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}]` 
+        : `[UNKNOWN LOCATION - ${gpsErrorString || "GPS Failed"}]`;
+        
+      const alertMessage = `🚨 EMERGENCY ALERT: ${locationText} - ${reason} 🚨`;
 
       const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
         const sorted = [user.email.toLowerCase(), guardian.email.toLowerCase()].sort();
         const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
         const combinedId = `${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
+        
         return push(ref(rtdb, `direct_chats/${combinedId}/updates`), {
-          id: `sos_${Date.now()}_${guardian.id}`,
+          id: `sos_${timestamp}_${guardian.id}`,
           type: 'location',
           senderName: user.name,
           senderEmail: user.email.toLowerCase(),
-          text: `🚨 EMERGENCY ALERT: [${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}] - ${reason} 🚨`,
-          lat: loc.lat,
-          lng: loc.lng,
-          timestamp: Date.now()
+          text: alertMessage,
+          lat: loc?.lat || 0,
+          lng: loc?.lng || 0,
+          timestamp: timestamp
         });
       });
       await Promise.all(broadcastTasks);
 
-      const alertId = `alert_${user.id}_${Date.now()}`;
+      const alertId = `alert_${user.id}_${timestamp}`;
       const log: AlertLog = {
         id: alertId, 
         senderEmail: user.email, 
         senderName: user.name,
-        timestamp: Date.now(), 
+        timestamp: timestamp, 
         location: loc, 
         message: reason, 
         isLive: true, 
@@ -97,13 +122,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       };
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
-    } catch (err: any) {
-      // Permission Handling Fix
-      if (err.message && (err.message.includes("Permission Denied") || err.message.includes("denied"))) {
-        setErrorMsg("⚠️ GPS BLOCKED. PLEASE ENABLE LOCATION IN BROWSER SETTINGS.");
+
+      if (!loc) {
+        setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. ENABLE PERMISSIONS FOR BETTER ACCURACY.");
       } else {
-        setErrorMsg(err.message || "SOS Failed.");
+        setErrorMsg(null);
       }
+
+    } catch (err: any) {
+      console.error("Critical SOS Failure:", err);
+      setErrorMsg(err.message || "SOS Failed.");
     }
   };
 
@@ -130,7 +158,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       
       if (diff <= 0) {
         setTimerTarget(null);
-        triggerSOS("SAFETY TIMER EXPIRED");
+        triggerSOS("SAFETY TIMER EXPIRED - USER DID NOT CHECK IN");
       } else {
         const m = Math.floor(diff / 60);
         const s = diff % 60;
@@ -142,9 +170,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [timerTarget, settings.isTimerActive]);
 
   const startTimer = (minutes: number) => {
+    if (minutes <= 0) return;
     const target = Date.now() + (minutes * 60 * 1000);
     setTimerTarget(target);
     setShowTimerModal(false);
+    setCustomTimerMinutes('');
   };
 
   const cancelTimer = () => {
@@ -176,13 +206,18 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   useEffect(() => {
+    // Only attempt to watch location if we haven't already errored out permanently
+    // But we try anyway to see if permissions were granted later
     watchIdRef.current = startLocationWatch((c: GuardianCoords) => {
       setCoords(c);
       if (externalActiveAlertId) {
         set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
       }
       findSafeSpots(c.lat, c.lng);
-    }, (err: string) => console.warn(err));
+    }, (err: string) => {
+      // Silent fail on watch, we only show error on explicit action
+      console.warn("Background GPS Watch:", err);
+    });
     
     return () => stopLocationWatch(watchIdRef.current);
   }, [externalActiveAlertId]);
@@ -218,7 +253,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 If timer expires without check-in, SOS is triggered automatically.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 mb-4">
               {[5, 15, 30, 60].map(min => (
                 <button 
                   key={min} 
@@ -228,6 +263,23 @@ const Dashboard: React.FC<DashboardProps> = ({
                   {min} MIN
                 </button>
               ))}
+            </div>
+            <div className="relative">
+              <input 
+                type="number" 
+                placeholder="Custom Minutes"
+                value={customTimerMinutes}
+                onChange={(e) => setCustomTimerMinutes(e.target.value)}
+                className="w-full bg-slate-950 border border-white/10 rounded-2xl py-3 px-4 text-sm text-white font-bold outline-none focus:border-blue-500"
+              />
+              {customTimerMinutes && (
+                <button 
+                  onClick={() => startTimer(parseInt(customTimerMinutes))}
+                  className="absolute right-2 top-1.5 bottom-1.5 bg-blue-600 px-4 rounded-xl text-[10px] font-black uppercase text-white hover:bg-blue-500 transition-colors"
+                >
+                  Start
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -295,7 +347,9 @@ const Dashboard: React.FC<DashboardProps> = ({
            <div className="glass p-5 rounded-[2rem] border border-blue-500/30 flex flex-col items-center bg-blue-900/10 shadow-[0_0_20px_rgba(37,99,235,0.1)]">
              <div className="text-2xl font-black text-blue-400 mono animate-pulse mb-1">{timeLeftStr}</div>
              <p className="text-[8px] font-bold text-blue-300 uppercase tracking-widest mb-3">Timer Active</p>
-             <button onClick={cancelTimer} className="bg-slate-800 text-[9px] font-bold px-4 py-2 rounded-full text-white hover:bg-red-500 transition-colors">CANCEL</button>
+             <button onClick={cancelTimer} className="bg-green-600 text-[9px] font-bold px-4 py-2 rounded-full text-white hover:bg-green-500 transition-colors shadow-lg active:scale-95 flex items-center gap-1">
+               <CheckCircle2 size={12} /> I'M SAFE (CANCEL)
+             </button>
            </div>
         ) : (
           <button onClick={() => setShowTimerModal(true)} className="glass p-5 rounded-[2rem] border border-white/5 flex flex-col items-center cursor-pointer hover:bg-slate-800/50 transition-colors group">
