@@ -1,3 +1,4 @@
+
 import {
   AlertCircle,
   Building2,
@@ -9,13 +10,14 @@ import {
   Mic,
   MicOff,
   Navigation,
+  Scan,
   Shield,
   ShieldAlert,
   Timer,
   Volume2,
   X
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import GuardianService from '../services/GuardianService';
 import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
@@ -68,6 +70,76 @@ const Dashboard: React.FC<DashboardProps> = ({
     userRef.current = user;
     settingsRef.current = settings;
   }, [user, settings]);
+
+  /**
+   * ROBUST SYSTEM PERMISSION CHECK (Requested Script)
+   * Requests Notifications + Geolocation and sends a test alert.
+   */
+  const runSystemCheck = useCallback(async () => {
+    setErrorMsg("RUNNING SYSTEM DIAGNOSTICS...");
+    
+    // 1. Request Notification Permission
+    let notifPermission = 'default';
+    if ('Notification' in window) {
+      notifPermission = Notification.permission;
+      if (notifPermission !== 'granted') {
+        notifPermission = await Notification.requestPermission();
+        if (notifPermission !== 'granted') {
+           setErrorMsg("⚠️ NOTIFICATION PERMISSION DENIED. ENABLE IN BROWSER SETTINGS.");
+        }
+      }
+    } else {
+      setErrorMsg("⚠️ NOTIFICATIONS NOT SUPPORTED.");
+    }
+
+    // 2. Request Geolocation & Send Notification
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          // Success: Get Location
+          const { latitude, longitude } = pos.coords;
+          setCoords({
+            lat: latitude,
+            lng: longitude,
+            accuracy: pos.coords.accuracy,
+            timestamp: pos.timestamp
+          });
+          
+          // 3. Send Notification with Location
+          if (notifPermission === 'granted') {
+            try {
+              new Notification("Aegis System Verification", {
+                body: `System Active. Location Secured: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+                icon: 'https://cdn-icons-png.flaticon.com/512/1063/1063376.png'
+              });
+            } catch (e) {
+              console.error("Notification trigger failed", e);
+            }
+          }
+          
+          setErrorMsg(null);
+          // Optional: Visual confirmation in UI instead of alert
+          // alert(`System Secure.\nLocation: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+        },
+        (err) => {
+          // 4. Critical Error Handling for Geolocation
+          // Error Code 1 is PERMISSION_DENIED
+          if (err.code === 1) { 
+             setErrorMsg("⚠️ GPS ACCESS DENIED. PLEASE ENABLE LOCATION PERMISSIONS IN YOUR BROWSER SETTINGS.");
+          } else if (err.code === 2) { 
+             setErrorMsg("⚠️ GPS SIGNAL UNAVAILABLE. CHECK CONNECTION.");
+          } else if (err.code === 3) { 
+             setErrorMsg("⚠️ GPS TIMEOUT. TRY AGAIN OUTSIDE.");
+          } else {
+             setErrorMsg(`⚠️ GPS ERROR: ${err.message}`);
+          }
+        },
+        { enableHighAccuracy: true, timeout: 12000 }
+      );
+    } else {
+      setErrorMsg("⚠️ GEOLOCATION NOT SUPPORTED BY DEVICE.");
+    }
+  }, []);
 
   // Resilient SOS Trigger
   const triggerSOS = async (reason: string) => {
@@ -313,9 +385,12 @@ const Dashboard: React.FC<DashboardProps> = ({
             <Volume2 size={16} className={recognitionStatus?.includes('Listening') ? 'text-blue-500 animate-pulse' : 'text-slate-600'} />
             <h3 className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic">Aegis Service</h3>
           </div>
-          <span className={`text-[8px] font-black uppercase px-3 py-1 rounded-full ${recognitionStatus?.includes('Listening') ? 'bg-blue-600/20 text-blue-500' : 'bg-slate-800 text-slate-500'}`}>
-            {recognitionStatus}
-          </span>
+          <button 
+             onClick={runSystemCheck} 
+             className="text-[8px] font-black uppercase px-3 py-1 rounded-full bg-slate-800 text-slate-400 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-1"
+          >
+             <Scan size={10} /> Test System
+          </button>
         </div>
         <div className="bg-slate-950/80 rounded-2xl p-4 min-h-[70px] flex items-start gap-4 border border-white/5">
            {recognitionStatus?.includes('Listening') ? <Mic size={16} className="text-blue-500 shrink-0 mt-1" /> : <MicOff size={16} className="text-slate-700 shrink-0 mt-1" />}

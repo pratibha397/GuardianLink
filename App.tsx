@@ -5,7 +5,7 @@ import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
-import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
+import { auth, db, doc, getDoc, onAuthStateChanged, onValue, ref, rtdb, setDoc, signInAnonymously, signOut } from './services/firebase';
 import { AlertLog, AppSettings, AppView, ChatMessage, EmergencyContact, User } from './types';
 
 const SETTINGS_KEY = 'guardian_link_v4';
@@ -59,6 +59,19 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  // FIX: Ensure Anonymous Auth is active for Firebase RLS
+  useEffect(() => {
+    if (user) {
+      const unsubscribe = onAuthStateChanged(auth, (u) => {
+        if (!u) {
+          console.log("Restoring anonymous session...");
+          signInAnonymously(auth).catch((e) => console.error("Auth restore failed:", e));
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [user]);
 
   // Background Execution Fix: Robust Screen Wake Lock implementation
   // Keeps screen on if LISTENING OR TIMER IS ACTIVE
@@ -200,7 +213,7 @@ const App: React.FC = () => {
   }, [activeAlertId]);
 
   const handleLogout = () => {
-    auth.signOut().catch(() => {});
+    signOut(auth).catch(() => {});
     localStorage.clear();
     localStorage.removeItem('isAuthenticated');
     setUser(null);
