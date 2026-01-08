@@ -1,3 +1,4 @@
+
 import {
   AlertCircle,
   Building2,
@@ -18,7 +19,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { AzureMapsService } from '../services/AzureMapService';
 import GuardianService from '../services/GuardianService';
-import { startLocationWatch, stopLocationWatch } from '../services/LocationServices';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
 
@@ -60,87 +61,36 @@ const Dashboard: React.FC<DashboardProps> = ({
   });
   const [timeLeftStr, setTimeLeftStr] = useState("");
 
-  // --- NUCLEAR FIX SOS TRIGGER START ---
+  // Resilient SOS Trigger
   const triggerSOS = async (reason: string) => {
-    // Helper to show notification with fallback
-    const forceAlert = (title: string, body: string) => {
-      // 1. Try OS Notification
-      if (Notification.permission === "granted") {
-        try {
-          new Notification(title, { body });
-        } catch (e) {
-          console.warn("OS Notification failed, falling back to alert", e);
-          // 2. Fallback: Browser Popup (Guaranteed to work)
-          alert(`🚨 ${title}\n\n${body}`);
-        }
-      } else {
-        // 3. If permission denied/default, use Browser Popup
-        alert(`🚨 ${title}\n\n${body}\n\n(Notifications blocked, using popup)`);
-      }
-    };
-
     setErrorMsg("DISPATCHING SOS SIGNAL...");
-
-    // 1. HTTPS CHECK
-    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      alert("🔒 SECURITY ERROR: You are on HTTP.\n\nFeatures disabled. Use HTTPS.");
-    }
-
-    // 2. NOTIFICATION PERMISSION
-    if (Notification.permission !== 'granted') {
-      const perm = await Notification.requestPermission();
-      if (perm !== 'granted') {
-        console.log("Notification permission not granted");
-      }
-    }
-
-    // 3. FAST GPS (5 Second Timeout)
-    const getFastLocation = (): Promise<GeolocationPosition> => {
-      return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) reject(new Error("No GPS"));
-        navigator.geolocation.getCurrentPosition(
-          resolve, 
-          reject, 
-          {
-            enableHighAccuracy: false, // False = Faster (Wi-Fi), True = Slower (GPS)
-            timeout: 5000,             // 5 seconds max wait
-            maximumAge: 0
-          }
-        );
-      });
-    };
-
+    
     let loc: GuardianCoords | null = null;
     let gpsErrorString: string | null = null;
 
+    // 1. Try to get Location (Best Effort)
     try {
-      const pos = await getFastLocation();
-      loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      loc = await getPreciseCurrentPosition();
       setCoords(loc);
     } catch (gpsErr: any) {
-      console.error("GPS Failure:", gpsErr);
-      if (gpsErr.code === 1) {
-        alert("❌ GPS PERMISSION DENIED!\n\nReset in browser settings (Lock Icon).");
-        gpsErrorString = "GPS Denied";
-      } else {
-        // Timeout or other error
-        console.warn("GPS Timed out or failed. Sending without location.");
-        gpsErrorString = "GPS Timeout";
-      }
+      console.warn("SOS: GPS Failed, proceeding without location.", gpsErr);
+      gpsErrorString = gpsErr.message || "GPS Permission Denied";
+      // We do NOT stop the SOS. We proceed with null location.
     }
 
     try {
       const guardians = settings.contacts || [];
-      if (guardians.length === 0) throw new Error("Add contacts in Settings.");
+      if (guardians.length === 0) throw new Error("Add contacts in Settings to enable SOS.");
 
       const timestamp = Date.now();
+      
+      // 2. Prepare Payload
       const locationText = loc 
         ? `[${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}]` 
-        : `[UNKNOWN LOCATION]`;
+        : `[UNKNOWN LOCATION - ${gpsErrorString || "GPS Failed"}]`;
         
       const alertMessage = `🚨 EMERGENCY ALERT: ${locationText} - ${reason} 🚨`;
 
-      // Send to Firebase
       const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
         const sorted = [user.email.toLowerCase(), guardian.email.toLowerCase()].sort();
         const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
@@ -159,7 +109,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       await Promise.all(broadcastTasks);
 
-      // Update Global Alert Log
       const alertId = `alert_${user.id}_${timestamp}`;
       const log: AlertLog = {
         id: alertId, 
@@ -174,35 +123,39 @@ const Dashboard: React.FC<DashboardProps> = ({
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
 
-      // --- TRIGGER VISUAL FEEDBACK (GUARANTEED) ---
-      forceAlert(
-        "SIGNAL DISPATCHED", 
-        `Reason: ${reason}\nLocation: ${loc ? `${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}` : "Unavailable"}`
-      );
-
-      setErrorMsg(loc ? "✅ ALERT SENT WITH GPS" : "⚠️ ALERT SENT (NO GPS)");
+      if (!loc) {
+        setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. ENABLE PERMISSIONS FOR BETTER ACCURACY.");
+      } else {
+        setErrorMsg(null);
+      }
 
     } catch (err: any) {
-      console.error("SOS Failed:", err);
-      forceAlert("SOS FAILED", err.message || "Unknown error");
-      setErrorMsg(err.message);
+      console.error("Critical SOS Failure:", err);
+      setErrorMsg(err.message || "SOS Failed.");
     }
   };
-  // --- NUCLEAR FIX SOS TRIGGER END ---
 
   // Timer Logic
   useEffect(() => {
     if (!timerTarget) {
       setTimeLeftStr("");
       localStorage.removeItem(TIMER_STORAGE_KEY);
-      if (settings.isTimerActive) updateSettings({ isTimerActive: false });
+      if (settings.isTimerActive) {
+         updateSettings({ isTimerActive: false });
+      }
       return;
     }
-    if (!settings.isTimerActive) updateSettings({ isTimerActive: true });
+
+    // Ensure WakeLock is active
+    if (!settings.isTimerActive) {
+      updateSettings({ isTimerActive: true });
+    }
+
     localStorage.setItem(TIMER_STORAGE_KEY, timerTarget.toString());
 
     const interval = setInterval(() => {
       const diff = Math.ceil((timerTarget - Date.now()) / 1000);
+      
       if (diff <= 0) {
         setTimerTarget(null);
         triggerSOS("SAFETY TIMER EXPIRED - USER DID NOT CHECK IN");
@@ -212,24 +165,28 @@ const Dashboard: React.FC<DashboardProps> = ({
         setTimeLeftStr(`${m}:${s.toString().padStart(2, '0')}`);
       }
     }, 1000);
+
     return () => clearInterval(interval);
   }, [timerTarget, settings.isTimerActive]);
 
   const startTimer = (minutes: number) => {
     if (minutes <= 0) return;
-    setTimerTarget(Date.now() + (minutes * 60 * 1000));
+    const target = Date.now() + (minutes * 60 * 1000);
+    setTimerTarget(target);
     setShowTimerModal(false);
     setCustomTimerMinutes('');
   };
 
-  const cancelTimer = () => setTimerTarget(null);
+  const cancelTimer = () => {
+    setTimerTarget(null);
+  };
 
   useEffect(() => {
     if (settings.isListening) {
-      GuardianService.start(user, settings, (s, h) => {
-        setRecognitionStatus(s || 'Listening...');
-        setLastHeard(h || '');
-      }, (l) => onAlert(l));
+      GuardianService.start(user, settings, (status: string, heard: string) => {
+        setRecognitionStatus(status || 'Listening...');
+        setLastHeard(heard || '');
+      }, (log: AlertLog) => onAlert(log));
     } else {
       GuardianService.stop();
       setRecognitionStatus('Stopped');
@@ -249,11 +206,19 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   useEffect(() => {
-    watchIdRef.current = startLocationWatch((c) => {
+    // Only attempt to watch location if we haven't already errored out permanently
+    // But we try anyway to see if permissions were granted later
+    watchIdRef.current = startLocationWatch((c: GuardianCoords) => {
       setCoords(c);
-      if (externalActiveAlertId) set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
+      if (externalActiveAlertId) {
+        set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
+      }
       findSafeSpots(c.lat, c.lng);
-    }, (e) => console.warn("GPS Watch:", e));
+    }, (err: string) => {
+      // Silent fail on watch, we only show error on explicit action
+      console.warn("Background GPS Watch:", err);
+    });
+    
     return () => stopLocationWatch(watchIdRef.current);
   }, [externalActiveAlertId]);
 
@@ -276,6 +241,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700 relative">
+      {/* Timer Modal */}
       {showTimerModal && (
         <div className="fixed inset-0 z-50 bg-[#020617]/90 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in">
           <div className="bg-slate-900 border border-white/10 p-8 rounded-[2.5rem] w-full max-w-sm shadow-2xl relative">
@@ -283,11 +249,37 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex flex-col items-center mb-6">
               <Timer size={42} className="text-blue-500 mb-3" />
               <h3 className="text-xl font-black uppercase italic text-white">Set Safety Timer</h3>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest text-center mt-2">
+                If timer expires without check-in, SOS is triggered automatically.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-4 mb-4">
               {[5, 15, 30, 60].map(min => (
-                <button key={min} onClick={() => startTimer(min)} className="bg-slate-800 hover:bg-blue-600 hover:text-white transition-all p-4 rounded-2xl text-sm font-black text-slate-300 border border-white/5">{min} MIN</button>
+                <button 
+                  key={min} 
+                  onClick={() => startTimer(min)}
+                  className="bg-slate-800 hover:bg-blue-600 hover:text-white transition-all p-4 rounded-2xl text-sm font-black text-slate-300 border border-white/5 active:scale-95"
+                >
+                  {min} MIN
+                </button>
               ))}
+            </div>
+            <div className="relative">
+              <input 
+                type="number" 
+                placeholder="Custom Minutes"
+                value={customTimerMinutes}
+                onChange={(e) => setCustomTimerMinutes(e.target.value)}
+                className="w-full bg-slate-950 border border-white/10 rounded-2xl py-3 px-4 text-sm text-white font-bold outline-none focus:border-blue-500"
+              />
+              {customTimerMinutes && (
+                <button 
+                  onClick={() => startTimer(parseInt(customTimerMinutes))}
+                  className="absolute right-2 top-1.5 bottom-1.5 bg-blue-600 px-4 rounded-xl text-[10px] font-black uppercase text-white hover:bg-blue-500 transition-colors"
+                >
+                  Start
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -299,13 +291,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             <Volume2 size={16} className={recognitionStatus?.includes('Listening') ? 'text-blue-500 animate-pulse' : 'text-slate-600'} />
             <h3 className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic">Aegis Service</h3>
           </div>
-          <span className={`text-[8px] font-black uppercase px-3 py-1 rounded-full ${recognitionStatus?.includes('Listening') ? 'bg-blue-600/20 text-blue-500' : 'bg-slate-800 text-slate-500'}`}>{recognitionStatus}</span>
+          <span className={`text-[8px] font-black uppercase px-3 py-1 rounded-full ${recognitionStatus?.includes('Listening') ? 'bg-blue-600/20 text-blue-500' : 'bg-slate-800 text-slate-500'}`}>
+            {recognitionStatus}
+          </span>
         </div>
         <div className="bg-slate-950/80 rounded-2xl p-4 min-h-[70px] flex items-start gap-4 border border-white/5">
            {recognitionStatus?.includes('Listening') ? <Mic size={16} className="text-blue-500 shrink-0 mt-1" /> : <MicOff size={16} className="text-slate-700 shrink-0 mt-1" />}
            <div className="flex-1">
               <p className="text-[10px] font-black uppercase text-slate-700 tracking-widest mb-1 italic">Status Box:</p>
-              <p className="text-xs font-bold text-slate-300 leading-snug italic line-clamp-2">{recognitionStatus === 'Listening...' ? `Heard: ${lastHeard || '...'}` : `System is ${recognitionStatus}`}</p>
+              <p className="text-xs font-bold text-slate-300 leading-snug italic line-clamp-2">
+                {recognitionStatus === 'Listening...' ? `Heard: ${lastHeard || '...'}` : `System is ${recognitionStatus}`}
+              </p>
            </div>
         </div>
       </div>
@@ -319,7 +315,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
         <div className="mt-8 text-center">
           <h2 className="text-xl font-black uppercase text-white tracking-tight italic">{settings.isListening ? 'Protection Active' : 'Standby'}</h2>
-          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 italic">{settings.isListening ? `Phrase: "${settings.triggerPhrase}"` : 'Touch shield to activate safety mesh'}</p>
+          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 italic">
+            {settings.isListening ? `Phrase: "${settings.triggerPhrase}"` : 'Touch shield to activate safety mesh'}
+          </p>
         </div>
       </div>
 
@@ -332,29 +330,48 @@ const Dashboard: React.FC<DashboardProps> = ({
            {coords && <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lng}`} target="_blank" rel="noreferrer" className="p-3 bg-blue-600 text-white rounded-2xl"><ExternalLink size={14} /></a>}
         </div>
         <div className="grid grid-cols-2 gap-4">
-           <div className="bg-slate-950 p-4 rounded-2xl border border-white/5"><span className="text-[7px] font-black text-slate-600 uppercase tracking-widest block mb-1">Latitude</span><span className="text-sm font-bold text-white mono">{coords ? coords.lat.toFixed(6) : '---.------'}</span></div>
-           <div className="bg-slate-950 p-4 rounded-2xl border border-white/5"><span className="text-[7px] font-black text-slate-600 uppercase tracking-widest block mb-1">Longitude</span><span className="text-sm font-bold text-white mono">{coords ? coords.lng.toFixed(6) : '---.------'}</span></div>
+           <div className="bg-slate-950 p-4 rounded-2xl border border-white/5">
+              <span className="text-[7px] font-black text-slate-600 uppercase tracking-widest block mb-1">Latitude</span>
+              <span className="text-sm font-bold text-white mono">{coords ? coords.lat.toFixed(6) : '---.------'}</span>
+           </div>
+           <div className="bg-slate-950 p-4 rounded-2xl border border-white/5">
+              <span className="text-[7px] font-black text-slate-600 uppercase tracking-widest block mb-1">Longitude</span>
+              <span className="text-sm font-bold text-white mono">{coords ? coords.lng.toFixed(6) : '---.------'}</span>
+           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
+        {/* Safety Timer UI: Active vs Inactive */}
         {timerTarget ? (
            <div className="glass p-5 rounded-[2rem] border border-blue-500/30 flex flex-col items-center bg-blue-900/10 shadow-[0_0_20px_rgba(37,99,235,0.1)]">
              <div className="text-2xl font-black text-blue-400 mono animate-pulse mb-1">{timeLeftStr}</div>
              <p className="text-[8px] font-bold text-blue-300 uppercase tracking-widest mb-3">Timer Active</p>
-             <button onClick={cancelTimer} className="bg-green-600 text-[9px] font-bold px-4 py-2 rounded-full text-white hover:bg-green-500 transition-colors shadow-lg active:scale-95 flex items-center gap-1"><CheckCircle2 size={12} /> I'M SAFE (CANCEL)</button>
+             <button onClick={cancelTimer} className="bg-green-600 text-[9px] font-bold px-4 py-2 rounded-full text-white hover:bg-green-500 transition-colors shadow-lg active:scale-95 flex items-center gap-1">
+               <CheckCircle2 size={12} /> I'M SAFE (CANCEL)
+             </button>
            </div>
         ) : (
-          <button onClick={() => setShowTimerModal(true)} className="glass p-5 rounded-[2rem] border border-white/5 flex flex-col items-center cursor-pointer hover:bg-slate-800/50 transition-colors group"><Timer size={18} className="text-blue-500 mb-3 group-hover:scale-110 transition-transform" /><p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest italic group-hover:text-white transition-colors">Safety Timer</p></button>
+          <button onClick={() => setShowTimerModal(true)} className="glass p-5 rounded-[2rem] border border-white/5 flex flex-col items-center cursor-pointer hover:bg-slate-800/50 transition-colors group">
+            <Timer size={18} className="text-blue-500 mb-3 group-hover:scale-110 transition-transform" />
+            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest italic group-hover:text-white transition-colors">Safety Timer</p>
+          </button>
         )}
 
-        <button onClick={() => triggerSOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl active:scale-95 transition-transform hover:bg-red-900/30"><ShieldAlert size={18} className="text-red-500 mb-3" /><p className="text-[9px] font-bold text-red-500 uppercase tracking-widest italic">Instant Signal</p></button>
+        <button onClick={() => triggerSOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl active:scale-95 transition-transform hover:bg-red-900/30">
+          <ShieldAlert size={18} className="text-red-500 mb-3" />
+          <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest italic">Instant Signal</p>
+        </button>
       </div>
 
       <div className="glass rounded-[2.5rem] p-6 border border-white/5 shadow-2xl pb-8">
         <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xs font-black uppercase tracking-widest italic text-white flex items-center gap-2"><Globe size={16} className="text-blue-500" /> Nearby Safety</h3>
-          <button onClick={() => coords && findSafeSpots(coords.lat, coords.lng)} disabled={isSearching} className="text-[9px] font-black text-blue-500 uppercase bg-blue-500/10 px-4 py-2 rounded-full">{isSearching ? 'Scanning...' : 'Update'}</button>
+          <h3 className="text-xs font-black uppercase tracking-widest italic text-white flex items-center gap-2">
+            <Globe size={16} className="text-blue-500" /> Nearby Safety
+          </h3>
+          <button onClick={() => coords && findSafeSpots(coords.lat, coords.lng)} disabled={isSearching} className="text-[9px] font-black text-blue-500 uppercase bg-blue-500/10 px-4 py-2 rounded-full">
+            {isSearching ? 'Scanning...' : 'Update'}
+          </button>
         </div>
         <div className="space-y-3">
           {safeSpots.map((spot: SafeSpot, i: number) => (
@@ -365,14 +382,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                  </div>
                  <div className="text-[11px] font-bold text-slate-200 uppercase italic truncate max-w-[150px]">{spot.name}</div>
               </div>
-              <div className="text-[9px] font-black text-slate-600 uppercase italic whitespace-nowrap bg-slate-900 px-3 py-1.5 rounded-xl">{spot.distance}</div>
+              <div className="text-[9px] font-black text-slate-600 uppercase italic whitespace-nowrap bg-slate-900 px-3 py-1.5 rounded-xl">
+                {spot.distance}
+              </div>
             </a>
           ))}
           {safeSpots.length === 0 && <p className="text-center text-[9px] text-slate-700 uppercase font-black py-8 italic">Locating rescue infrastructure...</p>}
         </div>
       </div>
 
-      {errorMsg && <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[10px] font-black text-amber-500 uppercase tracking-widest text-center animate-pulse flex items-center justify-center gap-2"><AlertCircle size={14} /> {errorMsg}</div>}
+      {errorMsg && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[10px] font-black text-amber-500 uppercase tracking-widest text-center animate-pulse flex items-center justify-center gap-2">
+           <AlertCircle size={14} /> {errorMsg}
+        </div>
+      )}
     </div>
   );
 };
