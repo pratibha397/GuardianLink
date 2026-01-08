@@ -1,6 +1,6 @@
 
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import React from 'react';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
@@ -8,14 +8,17 @@ import SettingsPanel from './components/SettingsPanel';
 import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
 import { AppSettings, AppView, ChatMessage, User } from './types';
 
-const SETTINGS_KEY = 'guardian_link_settings_v3';
+const { useState, useEffect, useRef } = React;
+
+const SETTINGS_KEY = 'guardian_link_v4';
 const ACTIVE_ALERT_KEY = 'guardian_active_alert_id_v3';
 
 const DEFAULT_SETTINGS: AppSettings = {
   triggerPhrase: 'Guardian, help me',
   checkInDuration: 15,
   contacts: [],
-  isListening: false
+  isListening: false,
+  onboarded: false
 };
 
 const App: React.FC = () => {
@@ -29,11 +32,58 @@ const App: React.FC = () => {
   });
   
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const saved = localStorage.getItem(SETTINGS_KEY);
+    if (saved) {
+      try {
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+      } catch {
+        return DEFAULT_SETTINGS;
+      }
+    }
+    return DEFAULT_SETTINGS;
+  });
+
   const [activeAlertId, setActiveAlertId] = useState<string | null>(() => {
     return localStorage.getItem(ACTIVE_ALERT_KEY);
   });
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
+  const wakeLockRef = useRef<any>(null);
+
+  // Persistence logic for settings
+  useEffect(() => {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }, [settings]);
+
+  // Screen Wake Lock API Implementation
+  useEffect(() => {
+    const requestWakeLock = async () => {
+      if ('wakeLock' in navigator && settings.isListening) {
+        try {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          console.log('Screen Wake Lock active');
+        } catch (err) {
+          console.error(`${(err as Error).name}, ${(err as Error).message}`);
+        }
+      } else if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+          wakeLockRef.current = null;
+          console.log('Screen Wake Lock released');
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+
+    requestWakeLock();
+
+    return () => {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+      }
+    };
+  }, [settings.isListening]);
 
   // Sync settings when user logs in
   useEffect(() => {
@@ -47,7 +97,6 @@ const App: React.FC = () => {
         
         if (docSnap.exists()) {
           const cloudData = docSnap.data() as AppSettings;
-          // Ensure contacts is always initialized as an array
           const cloudSettings = {
             ...DEFAULT_SETTINGS,
             ...cloudData,
@@ -55,31 +104,19 @@ const App: React.FC = () => {
           };
           
           setSettings(cloudSettings);
-          localStorage.setItem(SETTINGS_KEY, JSON.stringify(cloudSettings));
         } else {
-          // If user exists but has no cloud settings (first login), 
-          // check local storage fallback or use defaults
-          const local = localStorage.getItem(SETTINGS_KEY);
-          if (local) {
-             const localData = JSON.parse(local);
-             await setDoc(docRef, localData);
-             setSettings(localData);
-          } else {
-             await setDoc(docRef, DEFAULT_SETTINGS);
-             setSettings(DEFAULT_SETTINGS);
-          }
+          // Push local state to cloud if it doesn't exist
+          await setDoc(docRef, settings);
         }
       } catch (e) {
-        console.error("Cloud sync failed, using local fallback", e);
-        const local = localStorage.getItem(SETTINGS_KEY);
-        if (local) setSettings(JSON.parse(local));
+        console.error("Cloud sync failed", e);
       }
     };
 
     fetchSettings();
   }, [user?.email]);
 
-  // DETECTOR FOR GUARDIAN ALERTS (Receiver Audio Logic)
+  // Detector for incoming SOS signals from guardians
   useEffect(() => {
     if (!user || !settings.contacts || settings.contacts.length === 0) return;
 
@@ -89,7 +126,7 @@ const App: React.FC = () => {
     const playAlert = () => {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance("HELP HELP, EMERGENCY ALERT");
-      utterance.volume = 1; // Max volume for the utterance
+      utterance.volume = 1;
       utterance.rate = 0.9;
       utterance.pitch = 1.1;
       utterance.onend = () => {
@@ -108,7 +145,6 @@ const App: React.FC = () => {
 
     const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
     
-    // Subscribe to all authorized mesh nodes for incoming SOS signals
     const unsubscribers = settings.contacts.map(contact => {
       const email1 = user.email.toLowerCase().trim();
       const email2 = contact.email.toLowerCase().trim();
@@ -121,13 +157,11 @@ const App: React.FC = () => {
         if (data) {
           const msgs = Object.values(data) as ChatMessage[];
           if (msgs.length > 0) {
-            // Get the most recent message in the thread
             const latest = msgs.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
             const isFromOther = latest.senderEmail.toLowerCase().trim() !== user.email.toLowerCase().trim();
             const isSOS = latest.type === 'location' || 
                           /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
             
-            // Only trigger if message is fresh (last 2 minutes) to prevent legacy alerts firing
             if (isFromOther && isSOS && (Date.now() - latest.timestamp < 120000)) {
               if (!alertActive) {
                 alertActive = true;
@@ -139,26 +173,21 @@ const App: React.FC = () => {
       });
     });
 
-    // Interaction stops the alert (counts as "opening" or "checking")
     const handleInteraction = () => stopAlert();
     window.addEventListener('click', handleInteraction);
-    window.addEventListener('keydown', handleInteraction);
     window.addEventListener('touchstart', handleInteraction);
 
     return () => {
       unsubscribers.forEach(u => u());
       stopAlert();
       window.removeEventListener('click', handleInteraction);
-      window.removeEventListener('keydown', handleInteraction);
       window.removeEventListener('touchstart', handleInteraction);
     };
   }, [user?.email, settings.contacts]);
 
-  // Persist settings locally and to cloud whenever they change
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
 
     if (user) {
       try {

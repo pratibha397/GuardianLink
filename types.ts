@@ -38,12 +38,15 @@ export interface AppSettings {
   contacts: EmergencyContact[];
   isListening: boolean;
   primaryGuardianEmail?: string; // Target for automated danger alerts
+  onboarded: boolean; // Flag to track if user has completed setup
 }
 
 export interface SafeSpot {
   name: string;
   uri: string;
   distance?: string;
+  // Category of the safety location (e.g., Hospital, Police)
+  category?: string;
 }
 
 export enum AppView {
