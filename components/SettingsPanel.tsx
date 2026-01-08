@@ -1,28 +1,17 @@
-
-import { AlertCircle, CheckCircle2, Lock, Mic, RefreshCw, Search, Star, Trash2, User, UserPlus, Wifi } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Mic, Search, Star, Trash2, UserPlus, Wifi } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { AuthService } from '../services/AuthenticationService';
 import { db, doc, getDoc } from '../services/firebase';
-import { AppSettings, User as AppUser, EmergencyContact } from '../types';
+import { AppSettings, EmergencyContact } from '../types';
 
 interface SettingsPanelProps {
   settings: AppSettings;
   updateSettings: (s: Partial<AppSettings>) => void;
-  user: AppUser;
-  onUpdateUser: (u: AppUser) => void;
 }
 
-const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings, user, onUpdateUser }) => {
+const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings }) => {
   const [newContact, setNewContact] = useState({ name: '', email: '' });
   const [isSearching, setIsSearching] = useState(false);
   const [lookupResult, setLookupResult] = useState<'found' | 'not_found' | 'error' | null>(null);
-
-  // Password Change State
-  const [oldPass, setOldPass] = useState('');
-  const [newPass, setNewPass] = useState('');
-  const [confirmPass, setConfirmPass] = useState('');
-  const [passLoading, setPassLoading] = useState(false);
-  const [passMsg, setPassMsg] = useState<{ type: 'error' | 'success', text: string } | null>(null);
 
   const checkUserExists = async (inputEmail: string) => {
     const normalized = inputEmail.trim().toLowerCase();
@@ -109,86 +98,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings,
     updateSettings({ primaryGuardianEmail: email });
   };
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPassMsg(null);
-
-    if (newPass.length < 6) {
-      setPassMsg({ type: 'error', text: 'New password too short.' });
-      return;
-    }
-    if (newPass !== confirmPass) {
-      setPassMsg({ type: 'error', text: 'Passwords do not match.' });
-      return;
-    }
-
-    setPassLoading(true);
-    try {
-      const result = await AuthService.changePassword(user.email, oldPass, newPass);
-      if (result === 'success') {
-        setPassMsg({ type: 'success', text: 'Password updated successfully.' });
-        setOldPass('');
-        setNewPass('');
-        setConfirmPass('');
-      } else if (result === 'wrong_old') {
-        setPassMsg({ type: 'error', text: 'Incorrect current password.' });
-      } else if (result === 'same_as_old') {
-        setPassMsg({ type: 'error', text: 'New password cannot be same as old.' });
-      }
-    } catch (e) {
-      setPassMsg({ type: 'error', text: 'Failed to update password.' });
-    } finally {
-      setPassLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-10 duration-700 pb-10">
-      
-      {/* PROFILE SECTION - PICTURE REMOVED */}
-      <section className="space-y-4">
-        <div className="flex items-center gap-3 px-2">
-          <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500"><User size={18} /></div>
-          <h3 className="font-black text-[11px] uppercase tracking-widest text-slate-500 italic">My Account</h3>
-        </div>
-        
-        {/* Simplified User Info Card */}
-        <div className="bg-slate-950 p-6 rounded-[2rem] border border-white/5 shadow-inner">
-           <div className="flex items-center gap-4 mb-6">
-             <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center border border-slate-700">
-                <User size={24} className="text-slate-400" />
-             </div>
-             <div>
-               <h4 className="text-white font-bold text-lg">{user.name}</h4>
-               <p className="text-slate-500 text-xs font-mono">{user.email}</p>
-             </div>
-           </div>
-
-           {/* Change Password Sub-Section */}
-           <div className="bg-slate-900/50 p-5 rounded-2xl border border-white/5">
-              <h4 className="text-[10px] font-black uppercase text-slate-600 tracking-widest mb-4 flex items-center gap-2">
-                <Lock size={12} /> Change Password
-              </h4>
-              <form onSubmit={handleChangePassword} className="space-y-3">
-                 <input type="password" placeholder="Current Password" value={oldPass} onChange={e => setOldPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
-                 <div className="flex gap-3">
-                    <input type="password" placeholder="New Password" value={newPass} onChange={e => setNewPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
-                    <input type="password" placeholder="Confirm" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
-                 </div>
-                 <button type="submit" disabled={passLoading || !oldPass} className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors flex justify-center gap-2">
-                   {passLoading ? <RefreshCw className="animate-spin" size={14}/> : 'Update Password'}
-                 </button>
-                 {passMsg && (
-                   <p className={`text-[10px] font-bold text-center ${passMsg.type === 'error' ? 'text-red-500' : 'text-green-500'}`}>
-                     {passMsg.text}
-                   </p>
-                 )}
-              </form>
-           </div>
-        </div>
-      </section>
-
-      {/* PANIC PHRASE SECTION */}
       <section className="space-y-4">
         <div className="flex items-center gap-3 px-2">
           <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500"><Mic size={18} /></div>
@@ -208,7 +119,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings,
         </div>
       </section>
 
-      {/* CONTACTS SECTION */}
       <section className="space-y-6">
         <div className="flex items-center gap-3 px-2">
           <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500"><UserPlus size={18} /></div>

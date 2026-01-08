@@ -1,4 +1,3 @@
-
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import AuthScreen from './components/AuthScreen';
@@ -119,16 +118,6 @@ const App: React.FC = () => {
           // If no cloud settings, push current local settings to cloud
           await setDoc(docRef, settings);
         }
-
-        // Also ensure user profile exists in Firestore for discovery
-        const userRef = doc(db, "users", userEmail);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-           await setDoc(userRef, {
-             name: user.name,
-             email: user.email
-           });
-        }
       } catch (e) {
         console.error("Cloud sync failed", e);
       }
@@ -191,20 +180,6 @@ const App: React.FC = () => {
     // Explicitly write to local storage immediately to prevent race conditions on reload
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
     if (user) await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
-  };
-
-  const handleUserUpdate = async (updatedUser: User) => {
-    setUser(updatedUser);
-    localStorage.setItem('guardian_user', JSON.stringify(updatedUser));
-    // Sync to Firestore 'users' collection for discovery by others
-    try {
-      await setDoc(doc(db, "users", updatedUser.email.toLowerCase()), {
-        name: updatedUser.name,
-        email: updatedUser.email
-      }, { merge: true });
-    } catch (e) {
-      console.error("Failed to sync user profile", e);
-    }
   };
 
   useEffect(() => {
@@ -274,12 +249,7 @@ const App: React.FC = () => {
         {appView === AppView.MESSENGER && <Messenger user={user} settings={settings} activeAlertId={activeAlertId} />}
         {appView === AppView.SETTINGS && (
           <div className="p-6 pb-28">
-            <SettingsPanel 
-              user={user} 
-              onUpdateUser={handleUserUpdate}
-              settings={settings} 
-              updateSettings={updateSettings} 
-            />
+            <SettingsPanel settings={settings} updateSettings={updateSettings} />
           </div>
         )}
       </main>

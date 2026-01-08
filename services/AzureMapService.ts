@@ -6,50 +6,40 @@ import { SafeSpot } from '../types';
  */
 export const AzureMapsService = {
   getNearbyServices: async (lat: number, lng: number): Promise<SafeSpot[]> => {
-    // 1. Expanded Data Pool (Mock Database)
-    const servicePool = [
-      { name: "Central District Police", category: "Police", seed: 142, query: "police+station" },
-      { name: "St. Mary's Medical Center", category: "Hospital", seed: 931, query: "hospital" },
-      { name: "Metro Fire & Rescue", category: "Fire Department", seed: 528, query: "fire+station" },
-      { name: "City General Hospital", category: "Hospital", seed: 334, query: "hospital" },
-      { name: "Harbor Patrol Station", category: "Police", seed: 712, query: "police+station" },
-      { name: "Northside Emergency Unit", category: "Hospital", seed: 111, query: "hospital" },
-      { name: "West End Fire Brigade", category: "Fire Department", seed: 665, query: "fire+station" },
-      { name: "Transit Authority Police", category: "Police", seed: 899, query: "police+station" }
+    // Math logic to create pseudo-random but deterministic distances based on location
+    // This ensures distances change as the user moves (lat/lng changes)
+    const calcDist = (seed: number) => {
+        // Create a variation based on coordinates
+        const variation = (Math.abs(lat * 1000) + Math.abs(lng * 1000) + seed) % 50; 
+        // Map to a realistic range (e.g., 0.5km to 5.5km)
+        const km = 0.5 + (variation / 10);
+        return `${km.toFixed(2)} km`;
+    };
+
+    const services: SafeSpot[] = [
+      {
+        name: "District Police Headquarters",
+        category: "Police",
+        distance: calcDist(123), // Unique seed for Police
+        uri: `https://www.google.com/maps/search/police+station/@${lat},${lng},15z`
+      },
+      {
+        name: "City Medical Center",
+        category: "Hospital",
+        distance: calcDist(456), // Unique seed for Hospital
+        uri: `https://www.google.com/maps/search/hospital/@${lat},${lng},15z`
+      },
+      {
+        name: "Central Fire Station",
+        category: "Fire Department",
+        distance: calcDist(789), // Unique seed for Fire
+        uri: `https://www.google.com/maps/search/fire+station/@${lat},${lng},15z`
+      }
     ];
 
-    // 2. Calculate Distance & Sort
-    // We use a deterministic formula so the distance remains stable for a specific location
-    // but changes realistically as the user moves (lat/lng changes).
-    const calculatedServices = servicePool.map(service => {
-      // Create a variation based on high-precision coordinates and service ID
-      const locationFactor = Math.abs((lat * 1000) + (lng * 1000));
-      const variation = (locationFactor + service.seed) % 100;
-      
-      // Map to a realistic range: 0.2km to 10.2km
-      const distanceKm = 0.2 + (variation / 10);
-
-      return {
-        ...service,
-        numericDistance: distanceKm,
-        formattedDistance: `${distanceKm.toFixed(2)} km`
-      };
-    });
-
-    // 3. Sort ascending (Nearest first)
-    calculatedServices.sort((a, b) => a.numericDistance - b.numericDistance);
-
-    // 4. Return Top 3
-    const topServices: SafeSpot[] = calculatedServices.slice(0, 3).map(s => ({
-      name: s.name,
-      category: s.category,
-      distance: s.formattedDistance,
-      uri: `https://www.google.com/maps/search/${s.query}/@${lat},${lng},15z`
-    }));
-
-    // Simulate network latency for realism
-    await new Promise(resolve => setTimeout(resolve, 400));
+    // Simulate network latency
+    await new Promise(resolve => setTimeout(resolve, 300));
     
-    return topServices;
+    return services;
   }
 };

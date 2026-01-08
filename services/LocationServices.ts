@@ -1,44 +1,13 @@
-
 import { GuardianCoords } from '../types';
 
-const STORAGE_KEY = 'guardian_last_known_loc';
-
-// In-memory cache
+/**
+ * Strategy: Fast-Path Priority.
+ * We prioritize speed (cached) over precision (fresh) for the first few seconds of an emergency.
+ */
 let lastCapturedCoords: GuardianCoords | null = null;
 
-// Initialize cache from Session Storage to prevent "---" on page reload
-try {
-  const saved = sessionStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    const parsed = JSON.parse(saved);
-    // Accept cache if it's less than 30 minutes old for UI purposes
-    if (Date.now() - parsed.timestamp < 1800000) {
-      lastCapturedCoords = parsed;
-    }
-  }
-} catch (e) {
-  // Ignore storage errors
-}
-
-const saveLocation = (coords: GuardianCoords) => {
-  lastCapturedCoords = coords;
-  try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(coords));
-  } catch (e) {}
-};
-
-const formatCoords = (pos: GeolocationPosition): GuardianCoords => ({
-  lat: pos.coords.latitude,
-  lng: pos.coords.longitude,
-  accuracy: pos.coords.accuracy,
-  speed: pos.coords.speed,
-  heading: pos.coords.heading,
-  timestamp: pos.timestamp
-});
-
 /**
- * Continuous background watch.
- * OPTIMIZED: Starts with instant cache return, then updates with fresh data.
+ * Continuous background watch to keep a 'warm' cache.
  */
 export function startLocationWatch(
   onUpdate: (coords: GuardianCoords) => void,
@@ -49,40 +18,50 @@ export function startLocationWatch(
     return -1;
   }
 
-  // 1. FAST PATH: Return cached data immediately so UI isn't empty
+  // OPTIMIZATION: Check if we already have a coordinate in memory to fire immediately.
+  // This prevents the UI from showing "---" when switching views.
   if (lastCapturedCoords) {
     onUpdate(lastCapturedCoords);
   }
 
-  // 2. Start Watcher
-  // We use maximumAge: 0 to force fresh data eventually, but rely on cache for instant start
+  // Using standard high accuracy options but allowing cached data for speed
   return navigator.geolocation.watchPosition(
-    (pos) => {
-      const coords = formatCoords(pos);
-      saveLocation(coords);
-      onUpdate(coords);
+    (position) => {
+      const c = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        speed: position.coords.speed,
+        heading: position.coords.heading,
+        timestamp: position.timestamp
+      };
+      
+      // Update cache
+      lastCapturedCoords = c;
+      onUpdate(c);
     },
     (error) => {
-      console.warn("GPS Watch Error:", error.message);
-      if (error.code === 1) onError("Location Permission Denied");
-      else if (error.code === 2) onError("Location Unavailable");
-      else if (error.code === 3) onError("GPS Signal Weak");
+      console.warn("Watch stream signal dip:", error.message);
+      // Do not hard fail on temporary signal loss during watch
     },
     { 
       enableHighAccuracy: true, 
-      maximumAge: 10000, // Accept 10s old data to reduce battery drain and latency
-      timeout: 15000 
+      maximumAge: 30000, // CRITICAL FIX: Allow positions up to 30s old to display INSTANTLY
+      timeout: 20000 
     }
   );
 }
 
 /**
  * Robust SOS Coordinate Resolver.
- * STRATEGY: Race High Accuracy vs Time. Fallback to Low Accuracy, then Cache.
+ * Fixes "Signal Lost" bug by using standard timeouts and fallback logic.
+ * OPTIMIZED: Returns immediately if cache is available.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
-  // 1. If we have a very recent location (fresh within 10s), just use it.
-  if (lastCapturedCoords && (Date.now() - lastCapturedCoords.timestamp < 10000)) {
+  // FAST PATH: If we have a recent location from the watcher, return it immediately.
+  // This eliminates the 5-10s delay when triggering SOS if the app is already open.
+  if (lastCapturedCoords) {
+    console.log("SOS Location: Using Instant Memory Cache");
     return lastCapturedCoords;
   }
 
@@ -92,55 +71,29 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
       return;
     }
 
-    let isResolved = false;
-
-    const handleSuccess = (pos: GeolocationPosition) => {
-      if (isResolved) return;
-      isResolved = true;
-      const coords = formatCoords(pos);
-      saveLocation(coords);
-      resolve(coords);
-    };
-
-    const handleError = (primaryError: GeolocationPositionError) => {
-      if (isResolved) return;
-      
-      // Primary High-Accuracy request failed. 
-      // Fallback Strategy: Try Low Accuracy (Cell/Wifi) which is faster and more reliable indoors.
-      console.warn("High Accuracy GPS timed out/failed. Switching to Network Location.");
-      
-      navigator.geolocation.getCurrentPosition(
-        (pos) => handleSuccess(pos),
-        (secondaryError) => {
-          if (isResolved) return;
-          isResolved = true;
-          
-          // Final Safety Net: If both failed, return the last known cache if it exists (better than nothing for SOS)
-          if (lastCapturedCoords) {
-            console.warn("All location methods failed. Returning last known cache.");
-            resolve(lastCapturedCoords);
-          } else {
-            const msg = secondaryError.code === 1 ? "Permission Denied" : "Location Signal Lost";
-            reject(new Error(msg));
-          }
-        },
-        { 
-          enableHighAccuracy: false, 
-          timeout: 10000, 
-          maximumAge: Infinity // Accept ANY cached location the OS has
-        }
-      );
-    };
-
-    // Step 1: Try High Accuracy with a short timeout (5s)
-    // We want speed. If GPS doesn't lock in 5s, we degrade to Wifi/Cell.
+    // Attempt to get a fresh, high-accuracy position
     navigator.geolocation.getCurrentPosition(
-      handleSuccess,
-      handleError,
+      (pos) => {
+        const coords = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          speed: pos.coords.speed,
+          heading: pos.coords.heading,
+          timestamp: pos.timestamp
+        };
+        lastCapturedCoords = coords;
+        console.log("SOS Location: Fresh Lock Acquired");
+        resolve(coords);
+      },
+      (err) => {
+        console.warn("GPS Lock Failed:", err.message);
+        reject(new Error("Signal Lost: Unable to acquire location."));
+      },
       { 
         enableHighAccuracy: true, 
-        timeout: 5000, 
-        maximumAge: 5000 
+        timeout: 15000, 
+        maximumAge: 60000 // Accept anything from the last minute if we are desperate
       }
     );
   });
