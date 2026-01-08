@@ -1,5 +1,5 @@
 
-import { getApp, getApps, initializeApp, multiTabManager, type FirebaseApp } from "firebase/app";
+import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import {
   createUserWithEmailAndPassword,
   getAuth,
@@ -25,8 +25,9 @@ import {
   getDoc,
   getDocs,
   getFirestore,
-  indexedDBLocalCache,
   initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   query,
   setDoc,
   updateDoc,
@@ -44,37 +45,26 @@ const firebaseConfig = {
   measurementId: process.env.FIREBASE_MEASUREMENT_ID || ""
 };
 
-// Check configuration
-export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
-
-// Strictly ordered initialization
+// Singleton initialization
 const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Export initialized services
+// Explicitly pass app to all services to prevent "Component not registered" errors
 export const auth: Auth = getAuth(app);
 export const rtdb: Database = getDatabase(app);
 
-// Initialize Firestore with standard getter first
 let firestoreInstance: Firestore;
 try {
   firestoreInstance = initializeFirestore(app, {
-    localCache: indexedDBLocalCache({ tabManager: multiTabManager() })
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
   });
 } catch (e) {
-  console.warn("Firestore custom initialization failed, falling back to default.", e);
   firestoreInstance = getFirestore(app);
 }
 export const db = firestoreInstance;
 
-// Auth Exports
 export {
-  createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, updateProfile
+  collection, createUserWithEmailAndPassword, doc,
+  getDoc, getDocs, onAuthStateChanged, onValue, push, query, ref, sendPasswordResetEmail, set, setDoc, signInWithEmailAndPassword, update, updateDoc, updateProfile, where
 };
-
-// Firestore Exports
-  export { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where };
-
-// Database Exports
-  export { onValue, push, ref, set, update };
-  export type { DataSnapshot };
-
+export type { DataSnapshot };
+export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);

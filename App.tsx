@@ -1,4 +1,3 @@
-
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
 import * as React from 'react';
 import AuthScreen from './components/AuthScreen';
@@ -50,90 +49,64 @@ const App: React.FC = () => {
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
   const wakeLockRef = useRef<any>(null);
 
-  // Persistence logic for settings
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  // Screen Wake Lock API Implementation
   useEffect(() => {
     const requestWakeLock = async () => {
       if ('wakeLock' in navigator && settings.isListening) {
         try {
           wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-          console.log('Screen Wake Lock active');
         } catch (err) {
-          console.error(`${(err as Error).name}, ${(err as Error).message}`);
+          console.error(err);
         }
       } else if (wakeLockRef.current) {
         try {
           await wakeLockRef.current.release();
           wakeLockRef.current = null;
-          console.log('Screen Wake Lock released');
         } catch (err) {
           console.error(err);
         }
       }
     };
-
     requestWakeLock();
-
-    return () => {
-      if (wakeLockRef.current) {
-        wakeLockRef.current.release().catch(() => {});
-      }
-    };
+    return () => { if (wakeLockRef.current) wakeLockRef.current.release().catch(() => {}); };
   }, [settings.isListening]);
 
-  // Sync settings when user logs in
   useEffect(() => {
     if (!user) return;
-
     const fetchSettings = async () => {
       try {
         const userEmail = user.email.toLowerCase();
         const docRef = doc(db, "settings", userEmail);
         const docSnap = await getDoc(docRef);
-        
         if (docSnap.exists()) {
           const cloudData = docSnap.data() as AppSettings;
-          const cloudSettings = {
+          setSettings({
             ...DEFAULT_SETTINGS,
             ...cloudData,
             contacts: Array.isArray(cloudData.contacts) ? cloudData.contacts : []
-          };
-          
-          setSettings(cloudSettings);
+          });
         } else {
-          // Push local state to cloud if it doesn't exist
           await setDoc(docRef, settings);
         }
       } catch (e) {
         console.error("Cloud sync failed", e);
       }
     };
-
     fetchSettings();
   }, [user?.email]);
 
-  // Detector for incoming SOS signals from guardians
   useEffect(() => {
     if (!user || !settings.contacts || settings.contacts.length === 0) return;
-
     let alertActive = false;
     let timerId: any = null;
 
     const playAlert = () => {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance("HELP HELP, EMERGENCY ALERT");
-      utterance.volume = 1;
-      utterance.rate = 0.9;
-      utterance.pitch = 1.1;
-      utterance.onend = () => {
-        if (alertActive) {
-          timerId = setTimeout(playAlert, 1500);
-        }
-      };
+      utterance.onend = () => { if (alertActive) timerId = setTimeout(playAlert, 1500); };
       window.speechSynthesis.speak(utterance);
     };
 
@@ -144,29 +117,19 @@ const App: React.FC = () => {
     };
 
     const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
-    
     const unsubscribers = settings.contacts.map((contact: EmergencyContact) => {
-      const email1 = user.email.toLowerCase().trim();
-      const email2 = contact.email.toLowerCase().trim();
-      const sorted = [email1, email2].sort();
+      const sorted = [user.email.toLowerCase(), contact.email.toLowerCase()].sort();
       const combinedId = `${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
-      const path = `direct_chats/${combinedId}/updates`;
-      
-      return onValue(ref(rtdb, path), (snapshot) => {
+      return onValue(ref(rtdb, `direct_chats/${combinedId}/updates`), (snapshot) => {
         const data = snapshot.val();
         if (data) {
           const msgs = Object.values(data) as ChatMessage[];
           if (msgs.length > 0) {
             const latest = msgs.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
-            const isFromOther = latest.senderEmail.toLowerCase().trim() !== user.email.toLowerCase().trim();
-            const isSOS = latest.type === 'location' || 
-                          /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
-            
+            const isFromOther = latest.senderEmail.toLowerCase() !== user.email.toLowerCase();
+            const isSOS = latest.type === 'location' || /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
             if (isFromOther && isSOS && (Date.now() - latest.timestamp < 120000)) {
-              if (!alertActive) {
-                alertActive = true;
-                playAlert();
-              }
+              if (!alertActive) { alertActive = true; playAlert(); }
             }
           }
         }
@@ -176,9 +139,8 @@ const App: React.FC = () => {
     const handleInteraction = () => stopAlert();
     window.addEventListener('click', handleInteraction);
     window.addEventListener('touchstart', handleInteraction);
-
     return () => {
-      unsubscribers.forEach(u => u());
+      unsubscribers.forEach((u: () => void) => u());
       stopAlert();
       window.removeEventListener('click', handleInteraction);
       window.removeEventListener('touchstart', handleInteraction);
@@ -188,15 +150,7 @@ const App: React.FC = () => {
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
-
-    if (user) {
-      try {
-        const userEmail = user.email.toLowerCase();
-        await setDoc(doc(db, "settings", userEmail), updated, { merge: true });
-      } catch (e) {
-        console.error("Failed to save settings to cloud", e);
-      }
-    }
+    if (user) await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
   };
 
   useEffect(() => {
@@ -211,20 +165,13 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     auth.signOut().catch(() => {});
-    localStorage.removeItem('guardian_user');
-    localStorage.removeItem(ACTIVE_ALERT_KEY);
-    localStorage.removeItem(SETTINGS_KEY);
+    localStorage.clear();
     setUser(null);
     setSettings(DEFAULT_SETTINGS);
     setAppView(AppView.DASHBOARD);
   };
 
-  if (!user) {
-    return <AuthScreen onLogin={(u: User) => { 
-      setUser(u); 
-      localStorage.setItem('guardian_user', JSON.stringify(u)); 
-    }} />;
-  }
+  if (!user) return <AuthScreen onLogin={(u: User) => { setUser(u); localStorage.setItem('guardian_user', JSON.stringify(u)); }} />;
 
   return (
     <div className="min-h-screen flex flex-col max-w-md mx-auto bg-[#020617] relative text-slate-100 font-sans shadow-2xl">
@@ -241,45 +188,35 @@ const App: React.FC = () => {
           </div>
         </div>
         <button onClick={handleLogout} className="p-2 text-slate-600 hover:text-red-500 transition-colors group">
-          <LogOut size={18} className="group-hover:scale-110 transition-transform" />
+          <LogOut size={18} />
         </button>
       </header>
-
       <main className="flex-1 overflow-y-auto custom-scrollbar">
         {appView === AppView.DASHBOARD && (
           <div className="p-6 pb-28">
             <Dashboard 
-              user={user} 
-              settings={settings} 
-              updateSettings={updateSettings}
-              isEmergency={isEmergency}
-              onAlert={(log: AlertLog) => setActiveAlertId(log.id)}
-              externalActiveAlertId={activeAlertId}
-              onClearAlert={() => setActiveAlertId(null)}
+              user={user} settings={settings} updateSettings={updateSettings} isEmergency={isEmergency}
+              onAlert={(log: AlertLog) => setActiveAlertId(log.id)} externalActiveAlertId={activeAlertId} onClearAlert={() => setActiveAlertId(null)}
             />
           </div>
         )}
-        {appView === AppView.MESSENGER && (
-          <Messenger user={user} settings={settings} activeAlertId={activeAlertId} />
-        )}
+        {appView === AppView.MESSENGER && <Messenger user={user} settings={settings} activeAlertId={activeAlertId} />}
         {appView === AppView.SETTINGS && (
           <div className="p-6 pb-28">
             <SettingsPanel settings={settings} updateSettings={updateSettings} />
           </div>
         )}
       </main>
-
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] via-[#020617] to-transparent z-40">
+      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] to-transparent z-40">
         <div className="flex justify-around items-center glass p-2 rounded-[2.5rem] border border-white/10 shadow-2xl">
           {[
             { id: AppView.DASHBOARD, icon: Home, label: 'Safety' },
             { id: AppView.MESSENGER, icon: MessageSquare, label: 'Chats' },
             { id: AppView.SETTINGS, icon: Settings, label: 'Settings' }
-          ].map(item => (
+          ].map((item: { id: AppView, icon: any, label: string }) => (
             <button 
-              key={item.id} 
-              onClick={() => setAppView(item.id)} 
-              className={`flex items-center gap-2 px-6 py-3 rounded-2xl transition-all duration-300 ${appView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-slate-500 hover:text-slate-300'}`}
+              key={item.id} onClick={() => setAppView(item.id)} 
+              className={`flex items-center gap-2 px-6 py-3 rounded-2xl transition-all ${appView === item.id ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
             >
               <item.icon size={18} />
               {appView === item.id && <span className="text-[10px] font-bold uppercase tracking-widest">{item.label}</span>}
