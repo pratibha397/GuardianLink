@@ -29,11 +29,15 @@ const App: React.FC = () => {
   });
   
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
+  
+  // Persistence Fix: Ensure robust read from localStorage on mount
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem(SETTINGS_KEY);
     if (saved) {
       try {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        const parsed = JSON.parse(saved);
+        // Ensure contacts is always an array
+        return { ...DEFAULT_SETTINGS, ...parsed, contacts: parsed.contacts || [] };
       } catch {
         return DEFAULT_SETTINGS;
       }
@@ -47,35 +51,50 @@ const App: React.FC = () => {
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
   const wakeLockRef = useRef<any>(null);
 
+  // Sync settings to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
+  // Background Execution Fix: Robust Screen Wake Lock implementation
   useEffect(() => {
     const requestWakeLock = async () => {
       if ('wakeLock' in navigator && settings.isListening) {
         try {
           wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
         } catch (err) {
-          console.error(err);
+          console.error("Wake Lock failed:", err);
         }
-      } else if (wakeLockRef.current) {
+      } else if (!settings.isListening && wakeLockRef.current) {
         try {
           await wakeLockRef.current.release();
           wakeLockRef.current = null;
         } catch (err) {
-          console.error(err);
+          console.error("Wake Lock release failed:", err);
         }
       }
     };
+
+    // Initial request
     requestWakeLock();
-    return () => { 
+
+    // Re-acquire lock if tab visibility changes (browser often releases lock on hide)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && settings.isListening) {
+        requestWakeLock();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (wakeLockRef.current) {
         wakeLockRef.current.release().catch(() => {});
       }
     };
   }, [settings.isListening]);
 
+  // Cloud Sync: Merge cloud data with local data carefully
   useEffect(() => {
     if (!user) return;
     const fetchSettings = async () => {
@@ -83,14 +102,18 @@ const App: React.FC = () => {
         const userEmail = user.email.toLowerCase();
         const docRef = doc(db, "settings", userEmail);
         const docSnap = await getDoc(docRef);
+        
         if (docSnap.exists()) {
           const cloudData = docSnap.data() as AppSettings;
-          setSettings({
-            ...DEFAULT_SETTINGS,
+          setSettings(prev => ({
+            ...prev,
             ...cloudData,
+            // Prioritize local contacts if cloud is empty but local isn't (optional safety)
+            // But generally cloud is truth. Here we ensure array structure.
             contacts: Array.isArray(cloudData.contacts) ? cloudData.contacts : []
-          });
+          }));
         } else {
+          // If no cloud settings, push current local settings to cloud
           await setDoc(docRef, settings);
         }
       } catch (e) {
@@ -152,6 +175,8 @@ const App: React.FC = () => {
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
+    // Explicitly write to local storage immediately to prevent race conditions on reload
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
     if (user) await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
   };
 

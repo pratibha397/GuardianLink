@@ -1,4 +1,3 @@
-
 import { SafeSpot } from '../types';
 
 /**
@@ -7,32 +6,33 @@ import { SafeSpot } from '../types';
  */
 export const AzureMapsService = {
   getNearbyServices: async (lat: number, lng: number): Promise<SafeSpot[]> => {
-    // In a real app, this would be an API call. 
-    // Here we calculate distinct, deterministic distances for three key categories.
-    
-    // Simple mock calculation logic to ensure variation and distinct values
-    const getDist = (offset: number) => {
-      const base = 0.5 + (Math.abs(lat % 1) * 2) + (Math.abs(lng % 1) * 3);
-      return (base + offset).toFixed(1);
+    // Math logic to create pseudo-random but deterministic distances based on location
+    // This ensures distances change as the user moves (lat/lng changes)
+    const calcDist = (seed: number) => {
+        // Create a variation based on coordinates
+        const variation = (Math.abs(lat * 1000) + Math.abs(lng * 1000) + seed) % 50; 
+        // Map to a realistic range (e.g., 0.5km to 5.5km)
+        const km = 0.5 + (variation / 10);
+        return `${km.toFixed(2)} km`;
     };
 
     const services: SafeSpot[] = [
       {
         name: "District Police Headquarters",
         category: "Police",
-        distance: `${getDist(0.2)} km`,
+        distance: calcDist(123), // Unique seed for Police
         uri: `https://www.google.com/maps/search/police+station/@${lat},${lng},15z`
       },
       {
         name: "City Medical Center",
         category: "Hospital",
-        distance: `${getDist(1.4)} km`,
+        distance: calcDist(456), // Unique seed for Hospital
         uri: `https://www.google.com/maps/search/hospital/@${lat},${lng},15z`
       },
       {
         name: "Central Fire Station",
         category: "Fire Department",
-        distance: `${getDist(0.8)} km`,
+        distance: calcDist(789), // Unique seed for Fire
         uri: `https://www.google.com/maps/search/fire+station/@${lat},${lng},15z`
       }
     ];
