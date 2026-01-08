@@ -1,6 +1,6 @@
 
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
-import React from 'react';
+import * as React from 'react';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
@@ -14,7 +14,7 @@ const SETTINGS_KEY = 'guardian_link_v4';
 const ACTIVE_ALERT_KEY = 'guardian_active_alert_id_v3';
 
 const DEFAULT_SETTINGS: AppSettings = {
-  triggerPhrase: 'Help',
+  triggerPhrase: 'Guardian, help me',
   checkInDuration: 15,
   contacts: [],
   isListening: false,

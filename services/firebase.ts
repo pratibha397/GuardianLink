@@ -1,37 +1,37 @@
 
-import { FirebaseApp, getApp, getApps, initializeApp } from "firebase/app";
+import { getApp, getApps, initializeApp, multiTabManager, type FirebaseApp } from "firebase/app";
 import {
-  Auth,
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  type Auth
 } from "firebase/auth";
 import {
-  DataSnapshot,
-  Database,
   getDatabase,
   onValue,
   push,
   ref,
   set,
-  update
+  update,
+  type DataSnapshot,
+  type Database
 } from "firebase/database";
 import {
-  Firestore,
   collection,
   doc,
   getDoc,
   getDocs,
+  getFirestore,
+  indexedDBLocalCache,
   initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
   query,
   setDoc,
   updateDoc,
-  where
+  where,
+  type Firestore
 } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -52,10 +52,19 @@ const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) 
 
 // Export initialized services
 export const auth: Auth = getAuth(app);
-export const db: Firestore = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-});
 export const rtdb: Database = getDatabase(app);
+
+// Initialize Firestore with standard getter first
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(app, {
+    localCache: indexedDBLocalCache({ tabManager: multiTabManager() })
+  });
+} catch (e) {
+  console.warn("Firestore custom initialization failed, falling back to default.", e);
+  firestoreInstance = getFirestore(app);
+}
+export const db = firestoreInstance;
 
 // Auth Exports
 export {

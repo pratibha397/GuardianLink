@@ -14,12 +14,12 @@ import {
   Volume2,
   X
 } from 'lucide-react';
-import React from 'react';
-import { AzureMapsService } from '../services/AzureMapsService';
+import * as React from 'react';
+import { AzureMapsService } from '../services/AzureMapService';
 import GuardianService from '../services/GuardianService';
-import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
-import { AlertLog, AppSettings, User as AppUser, ChatMessage, GuardianCoords, SafeSpot } from '../types';
+import { AlertLog, AppSettings, User as AppUser, ChatMessage, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
 
 const { useState, useEffect, useRef } = React;
 
@@ -33,10 +33,15 @@ interface DashboardProps {
   onClearAlert: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ 
-  user, settings, updateSettings, isEmergency, 
-  onAlert, externalActiveAlertId, onClearAlert 
-}) => {
+const Dashboard = ({ 
+  user, 
+  settings, 
+  updateSettings, 
+  isEmergency, 
+  onAlert, 
+  externalActiveAlertId, 
+  onClearAlert 
+}: DashboardProps) => {
   const [coords, setCoords] = useState<GuardianCoords | null>(null);
   const [safeSpots, setSafeSpots] = useState<SafeSpot[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -63,7 +68,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         throw new Error("Add contacts in Settings to enable SOS.");
       }
 
-      const broadcastTasks = guardians.map(guardian => {
+      const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
         const email1 = user.email.toLowerCase().trim();
         const email2 = guardian.email.toLowerCase().trim();
         const sorted = [email1, email2].sort();
@@ -116,11 +121,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       GuardianService.start(
         user, 
         settings, 
-        (status, heard) => {
+        (status: string, heard: string) => {
           setRecognitionStatus(status || 'Listening...');
           setLastHeard(heard || '');
         },
-        (log) => onAlert(log)
+        (log: AlertLog) => onAlert(log)
       );
     } else {
       GuardianService.stop();
@@ -177,7 +182,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Trigger service discovery on movement
         findSafeSpots(c.lat, c.lng);
       },
-      (err) => console.warn("Watch Error:", err)
+      (err: string) => console.warn("Watch Error:", err)
     );
 
     // Dynamic Interval fallback to ensure it refreshes even if static
@@ -308,7 +313,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           </button>
         </div>
         <div className="space-y-3">
-          {safeSpots.map((spot, i) => (
+          {safeSpots.map((spot: SafeSpot, i: number) => (
             <a key={i} href={spot.uri} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between p-4 bg-slate-950/60 border border-white/5 rounded-2xl group active:bg-slate-900 transition-all">
               <div className="flex items-center gap-3">
                  <div className="w-10 h-10 bg-blue-600/10 rounded-xl flex items-center justify-center text-blue-500 border border-blue-500/10">
