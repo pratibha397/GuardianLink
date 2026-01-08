@@ -38,9 +38,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       const success = await AuthService.login(email, password);
       if (success) {
         // Mock retrieving user profile - in a real app this would come from DB
-        // For now, we reconstruct or use what we have. 
-        // Note: PhotoURL logic is handled in settings, but on fresh login we might not have it unless we stored it in localstorage alongside auth db.
-        // For this mock, we'll create the basic object.
         const mockUser: User = {
           id: `user_${Date.now()}`,
           email: email,

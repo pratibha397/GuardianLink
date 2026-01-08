@@ -1,5 +1,6 @@
-import { AlertCircle, Camera, CheckCircle2, Lock, Mic, RefreshCw, Search, Star, Trash2, User, UserPlus, Wifi } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+
+import { AlertCircle, CheckCircle2, Lock, Mic, RefreshCw, Search, Star, Trash2, User, UserPlus, Wifi } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { AuthService } from '../services/AuthenticationService';
 import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, User as AppUser, EmergencyContact } from '../types';
@@ -16,9 +17,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings,
   const [isSearching, setIsSearching] = useState(false);
   const [lookupResult, setLookupResult] = useState<'found' | 'not_found' | 'error' | null>(null);
 
-  // Profile State
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  
   // Password Change State
   const [oldPass, setOldPass] = useState('');
   const [newPass, setNewPass] = useState('');
@@ -111,18 +109,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings,
     updateSettings({ primaryGuardianEmail: email });
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result as string;
-        onUpdateUser({ ...user, photoURL: base64 });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassMsg(null);
@@ -159,53 +145,46 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings,
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-10 duration-700 pb-10">
       
-      {/* PROFILE SECTION */}
+      {/* PROFILE SECTION - PICTURE REMOVED */}
       <section className="space-y-4">
         <div className="flex items-center gap-3 px-2">
           <div className="p-2 bg-blue-600/10 rounded-xl text-blue-500"><User size={18} /></div>
-          <h3 className="font-black text-[11px] uppercase tracking-widest text-slate-500 italic">My Profile</h3>
-        </div>
-        <div className="bg-slate-950 p-6 rounded-[2.5rem] border border-white/5 shadow-inner flex items-center gap-6">
-           <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-             <div className="w-20 h-20 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center overflow-hidden">
-               {user.photoURL ? (
-                 <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-               ) : (
-                 <User size={32} className="text-slate-500" />
-               )}
-             </div>
-             <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-               <Camera size={20} className="text-white" />
-             </div>
-             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
-           </div>
-           <div>
-             <h4 className="text-white font-bold text-lg">{user.name}</h4>
-             <p className="text-slate-500 text-xs font-mono">{user.email}</p>
-             <p className="text-[9px] text-blue-500 font-bold uppercase tracking-widest mt-2">Tap photo to change</p>
-           </div>
+          <h3 className="font-black text-[11px] uppercase tracking-widest text-slate-500 italic">My Account</h3>
         </div>
         
-        {/* Change Password Sub-Section */}
-        <div className="bg-slate-950/50 p-6 rounded-[2rem] border border-white/5">
-          <h4 className="text-[10px] font-black uppercase text-slate-600 tracking-widest mb-4 flex items-center gap-2">
-            <Lock size={12} /> Security
-          </h4>
-          <form onSubmit={handleChangePassword} className="space-y-3">
-             <input type="password" placeholder="Current Password" value={oldPass} onChange={e => setOldPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
-             <div className="flex gap-3">
-                <input type="password" placeholder="New Password" value={newPass} onChange={e => setNewPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
-                <input type="password" placeholder="Confirm" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
+        {/* Simplified User Info Card */}
+        <div className="bg-slate-950 p-6 rounded-[2rem] border border-white/5 shadow-inner">
+           <div className="flex items-center gap-4 mb-6">
+             <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center border border-slate-700">
+                <User size={24} className="text-slate-400" />
              </div>
-             <button type="submit" disabled={passLoading || !oldPass} className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors flex justify-center gap-2">
-               {passLoading ? <RefreshCw className="animate-spin" size={14}/> : 'Update Password'}
-             </button>
-             {passMsg && (
-               <p className={`text-[10px] font-bold text-center ${passMsg.type === 'error' ? 'text-red-500' : 'text-green-500'}`}>
-                 {passMsg.text}
-               </p>
-             )}
-          </form>
+             <div>
+               <h4 className="text-white font-bold text-lg">{user.name}</h4>
+               <p className="text-slate-500 text-xs font-mono">{user.email}</p>
+             </div>
+           </div>
+
+           {/* Change Password Sub-Section */}
+           <div className="bg-slate-900/50 p-5 rounded-2xl border border-white/5">
+              <h4 className="text-[10px] font-black uppercase text-slate-600 tracking-widest mb-4 flex items-center gap-2">
+                <Lock size={12} /> Change Password
+              </h4>
+              <form onSubmit={handleChangePassword} className="space-y-3">
+                 <input type="password" placeholder="Current Password" value={oldPass} onChange={e => setOldPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
+                 <div className="flex gap-3">
+                    <input type="password" placeholder="New Password" value={newPass} onChange={e => setNewPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
+                    <input type="password" placeholder="Confirm" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white" />
+                 </div>
+                 <button type="submit" disabled={passLoading || !oldPass} className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors flex justify-center gap-2">
+                   {passLoading ? <RefreshCw className="animate-spin" size={14}/> : 'Update Password'}
+                 </button>
+                 {passMsg && (
+                   <p className={`text-[10px] font-bold text-center ${passMsg.type === 'error' ? 'text-red-500' : 'text-green-500'}`}>
+                     {passMsg.text}
+                   </p>
+                 )}
+              </form>
+           </div>
         </div>
       </section>
 

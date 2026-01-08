@@ -1,3 +1,4 @@
+
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import AuthScreen from './components/AuthScreen';
@@ -125,8 +126,7 @@ const App: React.FC = () => {
         if (!userSnap.exists()) {
            await setDoc(userRef, {
              name: user.name,
-             email: user.email,
-             photoURL: user.photoURL || null
+             email: user.email
            });
         }
       } catch (e) {
@@ -200,8 +200,7 @@ const App: React.FC = () => {
     try {
       await setDoc(doc(db, "users", updatedUser.email.toLowerCase()), {
         name: updatedUser.name,
-        email: updatedUser.email,
-        photoURL: updatedUser.photoURL || null
+        email: updatedUser.email
       }, { merge: true });
     } catch (e) {
       console.error("Failed to sync user profile", e);

@@ -17,17 +17,18 @@ const saveDb = (db: Record<string, string>) => {
 export const AuthService = {
   login: async (email: string, pass: string): Promise<boolean> => {
     await new Promise(r => setTimeout(r, 1000)); // Simulate net delay
-    const db = getDb();
+    const db = getDb(); // Read fresh DB
     const normalizedEmail = email.toLowerCase().trim();
-    return db[normalizedEmail] === pass;
+    // Check key strictly
+    return Object.prototype.hasOwnProperty.call(db, normalizedEmail) && db[normalizedEmail] === pass;
   },
 
   register: async (email: string, pass: string): Promise<'success' | 'exists'> => {
     await new Promise(r => setTimeout(r, 1000));
-    const db = getDb();
+    const db = getDb(); // Read fresh DB
     const normalizedEmail = email.toLowerCase().trim();
     
-    if (db[normalizedEmail]) {
+    if (Object.prototype.hasOwnProperty.call(db, normalizedEmail)) {
       return 'exists';
     }
     
@@ -41,7 +42,7 @@ export const AuthService = {
     const db = getDb();
     const normalizedEmail = email.toLowerCase().trim();
     // Only send OTP if user exists
-    return !!db[normalizedEmail];
+    return Object.prototype.hasOwnProperty.call(db, normalizedEmail);
   },
 
   verifyResetOTP: async (otp: string): Promise<boolean> => {
@@ -54,7 +55,7 @@ export const AuthService = {
     const db = getDb();
     const normalizedEmail = email.toLowerCase().trim();
     
-    if (db[normalizedEmail]) {
+    if (Object.prototype.hasOwnProperty.call(db, normalizedEmail)) {
       if (db[normalizedEmail] === newPass) {
         return 'same_as_old';
       }
@@ -69,6 +70,8 @@ export const AuthService = {
     await new Promise(r => setTimeout(r, 1000));
     const db = getDb();
     const normalizedEmail = email.toLowerCase().trim();
+
+    if (!Object.prototype.hasOwnProperty.call(db, normalizedEmail)) return 'wrong_old';
 
     if (db[normalizedEmail] !== oldPass) {
       return 'wrong_old';
