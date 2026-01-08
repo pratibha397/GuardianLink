@@ -6,7 +6,7 @@ import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
 import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
-import { AppSettings, AppView, ChatMessage, User } from './types';
+import { AlertLog, AppSettings, AppView, ChatMessage, EmergencyContact, User } from './types';
 
 const { useState, useEffect, useRef } = React;
 
@@ -14,7 +14,7 @@ const SETTINGS_KEY = 'guardian_link_v4';
 const ACTIVE_ALERT_KEY = 'guardian_active_alert_id_v3';
 
 const DEFAULT_SETTINGS: AppSettings = {
-  triggerPhrase: 'Guardian, help me',
+  triggerPhrase: 'Help',
   checkInDuration: 15,
   contacts: [],
   isListening: false,
@@ -145,7 +145,7 @@ const App: React.FC = () => {
 
     const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
     
-    const unsubscribers = settings.contacts.map(contact => {
+    const unsubscribers = settings.contacts.map((contact: EmergencyContact) => {
       const email1 = user.email.toLowerCase().trim();
       const email2 = contact.email.toLowerCase().trim();
       const sorted = [email1, email2].sort();
@@ -220,7 +220,7 @@ const App: React.FC = () => {
   };
 
   if (!user) {
-    return <AuthScreen onLogin={(u) => { 
+    return <AuthScreen onLogin={(u: User) => { 
       setUser(u); 
       localStorage.setItem('guardian_user', JSON.stringify(u)); 
     }} />;
@@ -253,7 +253,7 @@ const App: React.FC = () => {
               settings={settings} 
               updateSettings={updateSettings}
               isEmergency={isEmergency}
-              onAlert={(log) => setActiveAlertId(log.id)}
+              onAlert={(log: AlertLog) => setActiveAlertId(log.id)}
               externalActiveAlertId={activeAlertId}
               onClearAlert={() => setActiveAlertId(null)}
             />
