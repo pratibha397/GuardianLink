@@ -1,3 +1,4 @@
+
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import AuthScreen from './components/AuthScreen';
@@ -15,6 +16,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   checkInDuration: 15,
   contacts: [],
   isListening: false,
+  isTimerActive: false,
   onboarded: false
 };
 
@@ -22,7 +24,9 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem('guardian_user');
-      return saved ? JSON.parse(saved) : null;
+      const isAuth = localStorage.getItem('isAuthenticated');
+      // Require both user object and auth flag
+      return (saved && isAuth === 'true') ? JSON.parse(saved) : null;
     } catch {
       return null;
     }
@@ -57,15 +61,20 @@ const App: React.FC = () => {
   }, [settings]);
 
   // Background Execution Fix: Robust Screen Wake Lock implementation
+  // Keeps screen on if LISTENING OR TIMER IS ACTIVE
   useEffect(() => {
+    const shouldKeepAwake = settings.isListening || settings.isTimerActive;
+    
     const requestWakeLock = async () => {
-      if ('wakeLock' in navigator && settings.isListening) {
+      if ('wakeLock' in navigator && shouldKeepAwake) {
         try {
-          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          if (!wakeLockRef.current) {
+            wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          }
         } catch (err) {
           console.error("Wake Lock failed:", err);
         }
-      } else if (!settings.isListening && wakeLockRef.current) {
+      } else if (!shouldKeepAwake && wakeLockRef.current) {
         try {
           await wakeLockRef.current.release();
           wakeLockRef.current = null;
@@ -80,7 +89,7 @@ const App: React.FC = () => {
 
     // Re-acquire lock if tab visibility changes (browser often releases lock on hide)
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && settings.isListening) {
+      if (document.visibilityState === 'visible' && shouldKeepAwake) {
         requestWakeLock();
       }
     };
@@ -92,7 +101,7 @@ const App: React.FC = () => {
         wakeLockRef.current.release().catch(() => {});
       }
     };
-  }, [settings.isListening]);
+  }, [settings.isListening, settings.isTimerActive]);
 
   // Cloud Sync: Merge cloud data with local data carefully
   useEffect(() => {
@@ -193,6 +202,7 @@ const App: React.FC = () => {
   const handleLogout = () => {
     auth.signOut().catch(() => {});
     localStorage.clear();
+    localStorage.removeItem('isAuthenticated');
     setUser(null);
     setSettings(DEFAULT_SETTINGS);
     setAppView(AppView.DASHBOARD);
@@ -204,6 +214,7 @@ const App: React.FC = () => {
         onLogin={(u: User) => { 
           setUser(u); 
           localStorage.setItem('guardian_user', JSON.stringify(u)); 
+          localStorage.setItem('isAuthenticated', 'true');
         }} 
       />
     );
