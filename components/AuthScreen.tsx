@@ -1,4 +1,3 @@
-
 import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, Shield, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
 import {
@@ -31,7 +30,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
   const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
-  // Helper to ensure user is in discovery database
   const syncUserProfile = async (uid: string, email: string, displayName: string) => {
     try {
       await setDoc(doc(db, "users", email.toLowerCase()), {
@@ -89,7 +87,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         if (!name.trim()) throw new Error("A name is required for registration.");
         const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         await updateProfile(credential.user, { displayName: name.trim() });
-        
         await syncUserProfile(credential.user.uid, cleanEmail, name.trim());
 
         onLogin({
@@ -101,13 +98,14 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
         let finalName = credential.user.displayName || 'User';
 
-        // Check firestore for the name if display name is null (common in firebase)
         const userSnap = await getDoc(doc(db, "users", cleanEmail));
         if (userSnap.exists()) {
-          finalName = userSnap.data().name;
+          const userData = userSnap.data();
+          if (userData && userData.name) {
+            finalName = userData.name;
+          }
         }
 
-        // Sync again to ensure discoverability and update timestamp
         await syncUserProfile(credential.user.uid, cleanEmail, finalName);
 
         onLogin({ 
@@ -146,8 +144,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         </div>
 
         <div className="bg-slate-900/40 p-8 rounded-[2.5rem] border border-white/5 backdrop-blur-3xl shadow-2xl relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-500/20 to-transparent" />
-          
           {view !== 'forgot' && (
             <div className="flex bg-slate-950/80 p-1.5 rounded-2xl border border-white/5 mb-8">
               <button 
@@ -184,8 +180,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                   <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
                   <input 
                     type="text" required placeholder="Full Name" value={name} 
-                    onChange={(e) => setName(e.target.value)} 
-                    className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4.5 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all" 
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} 
+                    className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
                   />
                 </div>
               )}
@@ -194,8 +190,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
                 <input 
                   type="email" required placeholder="Email Address" value={email} 
-                  onChange={(e) => setEmail(e.target.value)} 
-                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4.5 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all" 
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)} 
+                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
                 />
               </div>
 
@@ -204,8 +200,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
                   <input 
                     type={showPassword ? "text" : "password"} required placeholder="Password" value={password} 
-                    onChange={(e) => setPassword(e.target.value)} 
-                    className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4.5 pl-12 pr-12 text-sm text-white font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all" 
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)} 
+                    className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-12 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
                   />
                   <button 
                     type="button" onClick={() => setShowPassword(!showPassword)}
@@ -233,7 +229,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
             <button 
               type="submit" disabled={loading} 
-              className="w-full bg-blue-600 hover:bg-blue-500 py-4.5 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl shadow-blue-600/20 active:scale-95 transition-all disabled:opacity-50"
+              className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50"
             >
               {loading ? "Processing..." : (view === 'register' ? "Register Account" : (view === 'login' ? "Login" : "Reset Password"))}
             </button>

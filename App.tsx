@@ -1,13 +1,11 @@
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
-import * as React from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
 import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
 import { AlertLog, AppSettings, AppView, ChatMessage, EmergencyContact, User } from './types';
-
-const { useState, useEffect, useRef } = React;
 
 const SETTINGS_KEY = 'guardian_link_v4';
 const ACTIVE_ALERT_KEY = 'guardian_active_alert_id_v3';
@@ -71,7 +69,11 @@ const App: React.FC = () => {
       }
     };
     requestWakeLock();
-    return () => { if (wakeLockRef.current) wakeLockRef.current.release().catch(() => {}); };
+    return () => { 
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+      }
+    };
   }, [settings.isListening]);
 
   useEffect(() => {
@@ -171,7 +173,16 @@ const App: React.FC = () => {
     setAppView(AppView.DASHBOARD);
   };
 
-  if (!user) return <AuthScreen onLogin={(u: User) => { setUser(u); localStorage.setItem('guardian_user', JSON.stringify(u)); }} />;
+  if (!user) {
+    return (
+      <AuthScreen 
+        onLogin={(u: User) => { 
+          setUser(u); 
+          localStorage.setItem('guardian_user', JSON.stringify(u)); 
+        }} 
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col max-w-md mx-auto bg-[#020617] relative text-slate-100 font-sans shadow-2xl">
@@ -191,12 +202,18 @@ const App: React.FC = () => {
           <LogOut size={18} />
         </button>
       </header>
+      
       <main className="flex-1 overflow-y-auto custom-scrollbar">
         {appView === AppView.DASHBOARD && (
           <div className="p-6 pb-28">
             <Dashboard 
-              user={user} settings={settings} updateSettings={updateSettings} isEmergency={isEmergency}
-              onAlert={(log: AlertLog) => setActiveAlertId(log.id)} externalActiveAlertId={activeAlertId} onClearAlert={() => setActiveAlertId(null)}
+              user={user} 
+              settings={settings} 
+              updateSettings={updateSettings} 
+              isEmergency={isEmergency}
+              onAlert={(log: AlertLog) => setActiveAlertId(log.id)} 
+              externalActiveAlertId={activeAlertId} 
+              onClearAlert={() => setActiveAlertId(null)}
             />
           </div>
         )}
@@ -207,15 +224,17 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
+
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md p-6 bg-gradient-to-t from-[#020617] to-transparent z-40">
         <div className="flex justify-around items-center glass p-2 rounded-[2.5rem] border border-white/10 shadow-2xl">
           {[
             { id: AppView.DASHBOARD, icon: Home, label: 'Safety' },
             { id: AppView.MESSENGER, icon: MessageSquare, label: 'Chats' },
             { id: AppView.SETTINGS, icon: Settings, label: 'Settings' }
-          ].map((item: { id: AppView, icon: any, label: string }) => (
+          ].map((item) => (
             <button 
-              key={item.id} onClick={() => setAppView(item.id)} 
+              key={item.id} 
+              onClick={() => setAppView(item.id)} 
               className={`flex items-center gap-2 px-6 py-3 rounded-2xl transition-all ${appView === item.id ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
             >
               <item.icon size={18} />

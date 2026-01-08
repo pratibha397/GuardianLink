@@ -5,7 +5,8 @@ import {
   Flame,
   Globe,
   Hospital,
-  Mic, MicOff,
+  Mic,
+  MicOff,
   Navigation,
   Shield,
   ShieldAlert,
@@ -13,14 +14,12 @@ import {
   Volume2,
   X
 } from 'lucide-react';
-import * as React from 'react';
-import { AzureMapsService } from '../services/AzureMapsService';
+import { useEffect, useRef, useState } from 'react';
+import { AzureMapsService } from '../services/AzureMapService';
 import GuardianService from '../services/GuardianService';
-import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
-
-const { useState, useEffect, useRef } = React;
 
 interface DashboardProps {
   user: AppUser;
@@ -76,8 +75,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const alertId = `alert_${user.id}_${Date.now()}`;
       const log: AlertLog = {
-        id: alertId, senderEmail: user.email, senderName: user.name,
-        timestamp: Date.now(), location: loc, message: reason, isLive: true, recipients: guardians.map(c => c.email)
+        id: alertId, 
+        senderEmail: user.email, 
+        senderName: user.name,
+        timestamp: Date.now(), 
+        location: loc, 
+        message: reason, 
+        isLive: true, 
+        recipients: guardians.map(c => c.email)
       };
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
@@ -96,7 +101,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       GuardianService.stop();
       setRecognitionStatus('Stopped');
     }
-  }, [settings.isListening, user]);
+  }, [settings.isListening, user, settings, onAlert]);
 
   const findSafeSpots = async (lat: number, lng: number) => {
     setIsSearching(true);
@@ -113,13 +118,16 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     watchIdRef.current = startLocationWatch((c: GuardianCoords) => {
       setCoords(c);
-      if (externalActiveAlertId) set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
+      if (externalActiveAlertId) {
+        set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
+      }
       findSafeSpots(c.lat, c.lng);
     }, (err: string) => console.warn(err));
+    
     return () => stopLocationWatch(watchIdRef.current);
   }, [externalActiveAlertId]);
 
-  if (externalActiveAlertId) {
+  if (externalActiveAlertId || isEmergency) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in px-6">
         <div className="bg-red-600 p-10 rounded-full shadow-[0_0_60px_rgba(239,68,68,0.5)] animate-pulse mb-8">
@@ -180,7 +188,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="p-2.5 bg-blue-600/10 rounded-xl text-blue-500"><Navigation size={18} /></div>
               <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 italic">Live Telemetry</h3>
            </div>
-           {coords && <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lng}`} target="_blank" className="p-3 bg-blue-600 text-white rounded-2xl"><ExternalLink size={14} /></a>}
+           {coords && <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lng}`} target="_blank" rel="noreferrer" className="p-3 bg-blue-600 text-white rounded-2xl"><ExternalLink size={14} /></a>}
         </div>
         <div className="grid grid-cols-2 gap-4">
            <div className="bg-slate-950 p-4 rounded-2xl border border-white/5">
@@ -199,10 +207,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           <Timer size={18} className="text-blue-500 mb-3" />
           <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest italic">Safety Timer</p>
         </div>
-        <div onClick={() => triggerSOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl">
+        <button onClick={() => triggerSOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl">
           <ShieldAlert size={18} className="text-red-500 mb-3" />
           <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest italic">Instant Signal</p>
-        </div>
+        </button>
       </div>
 
       <div className="glass rounded-[2.5rem] p-6 border border-white/5 shadow-2xl pb-8">
@@ -216,7 +224,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
         <div className="space-y-3">
           {safeSpots.map((spot: SafeSpot, i: number) => (
-            <a key={i} href={spot.uri} target="_blank" className="flex items-center justify-between p-4 bg-slate-950/60 border border-white/5 rounded-2xl">
+            <a key={i} href={spot.uri} target="_blank" rel="noreferrer" className="flex items-center justify-between p-4 bg-slate-950/60 border border-white/5 rounded-2xl">
               <div className="flex items-center gap-3">
                  <div className="w-10 h-10 bg-blue-600/10 rounded-xl flex items-center justify-center text-blue-500">
                     {spot.category === 'Police' ? <Building2 size={16}/> : spot.category === 'Fire Department' ? <Flame size={16}/> : <Hospital size={16}/>}

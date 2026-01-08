@@ -1,6 +1,4 @@
-
 import { AlertCircle, CheckCircle2, Mic, Search, Star, Trash2, UserPlus, Wifi } from 'lucide-react';
-import { useEffect, useState } from 'react';
 import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
 
@@ -30,20 +28,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       const userSnap = await getDoc(userRef);
       
       if (userSnap.exists()) {
+        const userData = userSnap.data();
         setLookupResult('found');
-        if (!newContact.name.trim()) {
-           setNewContact(prev => ({ ...prev, name: userSnap.data().name }));
+        if (!newContact.name.trim() && userData && userData.name) {
+           setNewContact(prev => ({ ...prev, name: userData.name }));
         }
       } else {
         setLookupResult('not_found');
       }
     } catch (error: any) {
       console.error("Discovery error:", error);
-      if (error.message?.includes('offline') || error.code === 'unavailable') {
-        setLookupResult('error');
-      } else {
-        setLookupResult('not_found');
-      }
+      setLookupResult('error');
     } finally {
       setIsSearching(false);
     }
@@ -73,14 +68,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
       };
       
       const currentContacts = Array.isArray(settings.contacts) ? settings.contacts : [];
-      
       if (currentContacts.some(c => c.email === cleanEmail)) {
         setNewContact({ name: '', email: '' });
         setLookupResult(null);
         return;
       }
 
-      // Automatically set as primary if it's the first contact
       const isFirst = currentContacts.length === 0;
       updateSettings({ 
         contacts: [...currentContacts, contact],
@@ -115,7 +108,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
            <input 
             type="text" 
             value={settings.triggerPhrase}
-            onChange={(e) => updateSettings({ triggerPhrase: e.target.value })}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSettings({ triggerPhrase: e.target.value })}
             className="w-full bg-slate-900/50 border border-white/5 rounded-2xl px-6 py-5 text-sm font-black text-white focus:border-blue-500 outline-none"
             placeholder="e.g. Guardian, help me"
           />
@@ -135,7 +128,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
           <div className="relative">
              <input 
               type="email" placeholder="Guardian Email" value={newContact.email}
-              onChange={(e) => setNewContact(p => ({...p, email: e.target.value}))}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewContact(p => ({...p, email: e.target.value}))}
               className={`w-full bg-slate-950 border rounded-2xl py-4 px-6 text-xs text-white font-bold pr-14 outline-none transition-colors ${lookupResult === 'found' ? 'border-green-500/50' : (lookupResult === 'not_found' || lookupResult === 'error') ? 'border-red-500/50' : 'border-white/5 focus:border-blue-500'}`}
             />
             <div className="absolute right-5 top-1/2 -translate-y-1/2">
@@ -149,7 +142,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
 
           <input 
             type="text" placeholder="Guardian Name" value={newContact.name}
-            onChange={(e) => setNewContact(p => ({...p, name: e.target.value}))}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewContact(p => ({...p, name: e.target.value}))}
             className="w-full bg-slate-900 border border-white/5 rounded-2xl px-6 py-4 text-xs text-white font-bold outline-none focus:border-blue-500"
           />
           
@@ -188,7 +181,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
                     <button 
                       onClick={() => setAsPrimary(c.email)}
                       className="text-slate-700 hover:text-blue-500 transition-colors p-3 hover:scale-110 transition-transform"
-                      title="Set as Primary Emergency Contact"
                     >
                       <Star size={18} />
                     </button>
