@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowRight, CheckCircle2, ChevronLeft, KeyRound, Lock, LogIn, Mail, RefreshCw, Shield } from 'lucide-react';
+import { AlertCircle, ArrowRight, CheckCircle2, ChevronLeft, KeyRound, Lock, LogIn, Mail, RefreshCw, Shield, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 import { AuthService } from '../services/AuthenticationService';
 import { User } from '../types';
@@ -7,7 +7,7 @@ interface AuthScreenProps {
   onLogin: (user: User) => void;
 }
 
-type AuthStep = 'LOGIN' | 'FORGOT_PASSWORD_EMAIL' | 'FORGOT_PASSWORD_OTP' | 'RESET_PASSWORD';
+type AuthStep = 'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD_EMAIL' | 'FORGOT_PASSWORD_OTP' | 'RESET_PASSWORD';
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [step, setStep] = useState<AuthStep>('LOGIN');
@@ -37,7 +37,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     try {
       const success = await AuthService.login(email, password);
       if (success) {
-        // Create mock user
         const mockUser: User = {
           id: `user_${Date.now()}`,
           email: email,
@@ -45,10 +44,34 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         };
         onLogin(mockUser);
       } else {
-        setError("Invalid credentials. Try user@test.com / password");
+        setError("Invalid email or password. Has this account been registered?");
       }
     } catch (err) {
       setError("Login failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    clearState();
+    setLoading(true);
+    try {
+      const result = await AuthService.register(email, password);
+      if (result === 'success') {
+        setSuccessMsg("Account created! Please sign in.");
+        setStep('LOGIN');
+        setPassword('');
+      } else {
+        setError("Account already exists with this email.");
+      }
+    } catch (err) {
+      setError("Registration failed.");
     } finally {
       setLoading(false);
     }
@@ -63,9 +86,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     clearState();
     setLoading(true);
     try {
-      await AuthService.sendResetOTP(email);
-      setStep('FORGOT_PASSWORD_OTP');
-      setSuccessMsg(`Reset code sent to ${email}`);
+      const exists = await AuthService.sendResetOTP(email);
+      if (exists) {
+        setStep('FORGOT_PASSWORD_OTP');
+        setSuccessMsg(`Reset code sent to ${email}`);
+      } else {
+        setError("No account found with this email.");
+      }
     } catch (err) {
       setError("Failed to send reset code.");
     } finally {
@@ -105,14 +132,17 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     clearState();
     setLoading(true);
     try {
-      await AuthService.resetPassword(newPass);
-      setStep('LOGIN');
-      setSuccessMsg("Password updated! Please login.");
-      // Reset forms
-      setPassword('');
-      setOtp('');
-      setNewPass('');
-      setConfirmPass('');
+      const success = await AuthService.resetPassword(email, newPass);
+      if (success) {
+        setStep('LOGIN');
+        setSuccessMsg("Password updated! Please login.");
+        setPassword('');
+        setOtp('');
+        setNewPass('');
+        setConfirmPass('');
+      } else {
+        setError("Failed to update password.");
+      }
     } catch (err) {
       setError("Update failed.");
     } finally {
@@ -126,8 +156,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         return (
           <form onSubmit={handleLogin} className="space-y-6 animate-in fade-in slide-in-from-right duration-300">
             <div className="space-y-2 text-center mb-8">
-              <h2 className="text-xl font-bold text-white">Welcome Back</h2>
-              <p className="text-xs text-slate-500 font-medium">Sign in to access GuardianLink</p>
+              <h2 className="text-xl font-bold text-white">Sign In</h2>
+              <p className="text-xs text-slate-500 font-medium">Welcome back to GuardianLink</p>
             </div>
             
             <div className="space-y-4">
@@ -156,9 +186,55 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Sign In'} <LogIn size={16} />
             </button>
             
-            <div className="text-center">
-              <button type="button" onClick={() => { clearState(); setStep('FORGOT_PASSWORD_EMAIL'); }} className="text-xs font-bold text-slate-500 hover:text-blue-500 transition-colors">
+            <div className="flex justify-between items-center text-[10px] font-bold mt-4">
+              <button type="button" onClick={() => { clearState(); setStep('FORGOT_PASSWORD_EMAIL'); }} className="text-slate-500 hover:text-blue-500 transition-colors">
                 Forgot Password?
+              </button>
+              <button type="button" onClick={() => { clearState(); setStep('REGISTER'); }} className="text-blue-500 hover:text-blue-400 transition-colors">
+                Create Account
+              </button>
+            </div>
+          </form>
+        );
+
+      case 'REGISTER':
+        return (
+          <form onSubmit={handleRegister} className="space-y-6 animate-in fade-in slide-in-from-right duration-300">
+            <div className="space-y-2 text-center mb-8">
+              <h2 className="text-xl font-bold text-white">Create Account</h2>
+              <p className="text-xs text-slate-500 font-medium">Join the GuardianLink Network</p>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="relative group">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
+                <input 
+                  type="email" required placeholder="Email Address" value={email} 
+                  onChange={(e) => setEmail(e.target.value)} 
+                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
+                />
+              </div>
+              <div className="relative group">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
+                <input 
+                  type="password" required placeholder="Create Password" value={password} 
+                  onChange={(e) => setPassword(e.target.value)} 
+                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
+                />
+              </div>
+            </div>
+
+            <button 
+              type="submit" disabled={loading} 
+              className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Register'} <UserPlus size={16} />
+            </button>
+            
+            <div className="text-center mt-4">
+              <span className="text-[10px] text-slate-500 font-bold mr-2">Already have an account?</span>
+              <button type="button" onClick={() => { clearState(); setStep('LOGIN'); }} className="text-[10px] font-bold text-blue-500 hover:text-blue-400 transition-colors">
+                Sign In
               </button>
             </div>
           </form>
@@ -169,12 +245,12 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           <form onSubmit={handleSendResetOTP} className="space-y-6 animate-in fade-in slide-in-from-right duration-300">
             <div className="space-y-2 text-center mb-8">
               <h2 className="text-xl font-bold text-white">Reset Password</h2>
-              <p className="text-xs text-slate-500 font-medium">We'll send a code to reset your account.</p>
+              <p className="text-xs text-slate-500 font-medium">We'll send a code to your registered email.</p>
             </div>
             <div className="relative group">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
               <input 
-                type="email" required placeholder="Email Address" value={email} 
+                type="email" required placeholder="Registered Email Address" value={email} 
                 onChange={(e) => setEmail(e.target.value)} 
                 className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
               />
@@ -183,11 +259,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               type="submit" disabled={loading} 
               className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
-               {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Send Reset OTP'} <ArrowRight size={16} />
+               {loading ? <RefreshCw className="animate-spin" size={16}/> : 'Send OTP'} <ArrowRight size={16} />
             </button>
             <div className="text-center">
               <button type="button" onClick={() => { clearState(); setStep('LOGIN'); }} className="text-xs font-bold text-slate-500 hover:text-white transition-colors flex items-center justify-center gap-1 mx-auto">
-                <ChevronLeft size={14} /> Back to Login
+                <ChevronLeft size={14} /> Back to Sign In
               </button>
             </div>
           </form>
@@ -226,8 +302,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         return (
           <form onSubmit={handleResetPassword} className="space-y-6 animate-in fade-in slide-in-from-right duration-300">
              <div className="space-y-2 text-center mb-8">
-              <h2 className="text-xl font-bold text-white">Create Password</h2>
-              <p className="text-xs text-slate-500 font-medium">Secure your account with a new password.</p>
+              <h2 className="text-xl font-bold text-white">Create New Password</h2>
+              <p className="text-xs text-slate-500 font-medium">Secure your account for {email}</p>
             </div>
             <div className="space-y-4">
               <div className="relative group">
