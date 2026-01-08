@@ -49,16 +49,36 @@ export const AuthService = {
     return otp === '123456';
   },
 
-  resetPassword: async (email: string, newPass: string): Promise<boolean> => {
+  resetPassword: async (email: string, newPass: string): Promise<'success' | 'same_as_old' | 'error'> => {
     await new Promise(r => setTimeout(r, 1000));
     const db = getDb();
     const normalizedEmail = email.toLowerCase().trim();
     
     if (db[normalizedEmail]) {
+      if (db[normalizedEmail] === newPass) {
+        return 'same_as_old';
+      }
       db[normalizedEmail] = newPass;
       saveDb(db);
-      return true;
+      return 'success';
     }
-    return false;
+    return 'error';
+  },
+
+  changePassword: async (email: string, oldPass: string, newPass: string): Promise<'success' | 'wrong_old' | 'same_as_old'> => {
+    await new Promise(r => setTimeout(r, 1000));
+    const db = getDb();
+    const normalizedEmail = email.toLowerCase().trim();
+
+    if (db[normalizedEmail] !== oldPass) {
+      return 'wrong_old';
+    }
+    if (oldPass === newPass) {
+      return 'same_as_old';
+    }
+
+    db[normalizedEmail] = newPass;
+    saveDb(db);
+    return 'success';
   }
 };

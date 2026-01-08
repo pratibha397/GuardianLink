@@ -37,6 +37,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     try {
       const success = await AuthService.login(email, password);
       if (success) {
+        // Mock retrieving user profile - in a real app this would come from DB
+        // For now, we reconstruct or use what we have. 
+        // Note: PhotoURL logic is handled in settings, but on fresh login we might not have it unless we stored it in localstorage alongside auth db.
+        // For this mock, we'll create the basic object.
         const mockUser: User = {
           id: `user_${Date.now()}`,
           email: email,
@@ -132,14 +136,16 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     clearState();
     setLoading(true);
     try {
-      const success = await AuthService.resetPassword(email, newPass);
-      if (success) {
+      const result = await AuthService.resetPassword(email, newPass);
+      if (result === 'success') {
         setStep('LOGIN');
         setSuccessMsg("Password updated! Please login.");
         setPassword('');
         setOtp('');
         setNewPass('');
         setConfirmPass('');
+      } else if (result === 'same_as_old') {
+        setError("New password cannot be the same as the old password.");
       } else {
         setError("Failed to update password.");
       }
