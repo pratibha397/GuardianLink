@@ -63,9 +63,10 @@ export function startLocationWatch(
       onUpdate(coords);
     },
     (error) => {
-      // Only warn, do not spam alerts.
       console.warn("GPS Watch Error:", error.message);
       if (error.code === 1) onError("Location Permission Denied");
+      else if (error.code === 2) onError("Location Unavailable");
+      else if (error.code === 3) onError("GPS Signal Weak");
     },
     { 
       enableHighAccuracy: true, 
@@ -78,7 +79,6 @@ export function startLocationWatch(
 /**
  * Robust SOS Coordinate Resolver.
  * STRATEGY: Race High Accuracy vs Time. Fallback to Low Accuracy, then Cache.
- * Throws explicit errors so UI can handle them or fall back to null.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   // 1. If we have a very recent location (fresh within 10s), just use it.

@@ -1,8 +1,6 @@
-
 import {
   AlertCircle,
   Building2,
-  CheckCircle2,
   ExternalLink,
   Flame,
   Globe,
@@ -33,8 +31,6 @@ interface DashboardProps {
   onClearAlert: () => void;
 }
 
-const TIMER_STORAGE_KEY = 'guardian_timer_target_v1';
-
 const Dashboard: React.FC<DashboardProps> = ({ 
   user, 
   settings, 
@@ -52,69 +48,37 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [lastHeard, setLastHeard] = useState<string>('');
   const watchIdRef = useRef<number>(-1);
 
-  // Timer State
-  const [showTimerModal, setShowTimerModal] = useState(false);
-  const [customTimerMinutes, setCustomTimerMinutes] = useState('');
-  const [timerTarget, setTimerTarget] = useState<number | null>(() => {
-    const saved = localStorage.getItem(TIMER_STORAGE_KEY);
-    return saved ? parseInt(saved) : null;
-  });
-  const [timeLeftStr, setTimeLeftStr] = useState("");
-
-  // Resilient SOS Trigger
   const triggerSOS = async (reason: string) => {
     setErrorMsg("DISPATCHING SOS SIGNAL...");
-    
-    let loc: GuardianCoords | null = null;
-    let gpsErrorString: string | null = null;
-
-    // 1. Try to get Location (Best Effort)
     try {
-      loc = await getPreciseCurrentPosition();
+      const loc = await getPreciseCurrentPosition();
       setCoords(loc);
-    } catch (gpsErr: any) {
-      console.warn("SOS: GPS Failed, proceeding without location.", gpsErr);
-      gpsErrorString = gpsErr.message || "GPS Permission Denied";
-      // We do NOT stop the SOS. We proceed with null location.
-    }
-
-    try {
       const guardians = settings.contacts || [];
       if (guardians.length === 0) throw new Error("Add contacts in Settings to enable SOS.");
-
-      const timestamp = Date.now();
-      
-      // 2. Prepare Payload
-      const locationText = loc 
-        ? `[${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}]` 
-        : `[UNKNOWN LOCATION - ${gpsErrorString || "GPS Failed"}]`;
-        
-      const alertMessage = `🚨 EMERGENCY ALERT: ${locationText} - ${reason} 🚨`;
 
       const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
         const sorted = [user.email.toLowerCase(), guardian.email.toLowerCase()].sort();
         const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
         const combinedId = `${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
-        
         return push(ref(rtdb, `direct_chats/${combinedId}/updates`), {
-          id: `sos_${timestamp}_${guardian.id}`,
+          id: `sos_${Date.now()}_${guardian.id}`,
           type: 'location',
           senderName: user.name,
           senderEmail: user.email.toLowerCase(),
-          text: alertMessage,
-          lat: loc?.lat || 0,
-          lng: loc?.lng || 0,
-          timestamp: timestamp
+          text: `🚨 EMERGENCY ALERT: [${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}] - ${reason} 🚨`,
+          lat: loc.lat,
+          lng: loc.lng,
+          timestamp: Date.now()
         });
       });
       await Promise.all(broadcastTasks);
 
-      const alertId = `alert_${user.id}_${timestamp}`;
+      const alertId = `alert_${user.id}_${Date.now()}`;
       const log: AlertLog = {
         id: alertId, 
         senderEmail: user.email, 
         senderName: user.name,
-        timestamp: timestamp, 
+        timestamp: Date.now(), 
         location: loc, 
         message: reason, 
         isLive: true, 
@@ -122,63 +86,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       };
       await set(ref(rtdb, `alerts/${alertId}`), log);
       onAlert(log);
-
-      if (!loc) {
-        setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. ENABLE PERMISSIONS FOR BETTER ACCURACY.");
-      } else {
-        setErrorMsg(null);
-      }
-
     } catch (err: any) {
-      console.error("Critical SOS Failure:", err);
       setErrorMsg(err.message || "SOS Failed.");
     }
-  };
-
-  // Timer Logic
-  useEffect(() => {
-    if (!timerTarget) {
-      setTimeLeftStr("");
-      localStorage.removeItem(TIMER_STORAGE_KEY);
-      if (settings.isTimerActive) {
-         updateSettings({ isTimerActive: false });
-      }
-      return;
-    }
-
-    // Ensure WakeLock is active
-    if (!settings.isTimerActive) {
-      updateSettings({ isTimerActive: true });
-    }
-
-    localStorage.setItem(TIMER_STORAGE_KEY, timerTarget.toString());
-
-    const interval = setInterval(() => {
-      const diff = Math.ceil((timerTarget - Date.now()) / 1000);
-      
-      if (diff <= 0) {
-        setTimerTarget(null);
-        triggerSOS("SAFETY TIMER EXPIRED - USER DID NOT CHECK IN");
-      } else {
-        const m = Math.floor(diff / 60);
-        const s = diff % 60;
-        setTimeLeftStr(`${m}:${s.toString().padStart(2, '0')}`);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [timerTarget, settings.isTimerActive]);
-
-  const startTimer = (minutes: number) => {
-    if (minutes <= 0) return;
-    const target = Date.now() + (minutes * 60 * 1000);
-    setTimerTarget(target);
-    setShowTimerModal(false);
-    setCustomTimerMinutes('');
-  };
-
-  const cancelTimer = () => {
-    setTimerTarget(null);
   };
 
   useEffect(() => {
@@ -206,18 +116,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   useEffect(() => {
-    // Only attempt to watch location if we haven't already errored out permanently
-    // But we try anyway to see if permissions were granted later
     watchIdRef.current = startLocationWatch((c: GuardianCoords) => {
       setCoords(c);
       if (externalActiveAlertId) {
         set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
       }
       findSafeSpots(c.lat, c.lng);
-    }, (err: string) => {
-      // Silent fail on watch, we only show error on explicit action
-      console.warn("Background GPS Watch:", err);
-    });
+    }, (err: string) => console.warn(err));
     
     return () => stopLocationWatch(watchIdRef.current);
   }, [externalActiveAlertId]);
@@ -240,51 +145,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-700 relative">
-      {/* Timer Modal */}
-      {showTimerModal && (
-        <div className="fixed inset-0 z-50 bg-[#020617]/90 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in">
-          <div className="bg-slate-900 border border-white/10 p-8 rounded-[2.5rem] w-full max-w-sm shadow-2xl relative">
-            <button onClick={() => setShowTimerModal(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X size={24}/></button>
-            <div className="flex flex-col items-center mb-6">
-              <Timer size={42} className="text-blue-500 mb-3" />
-              <h3 className="text-xl font-black uppercase italic text-white">Set Safety Timer</h3>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest text-center mt-2">
-                If timer expires without check-in, SOS is triggered automatically.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              {[5, 15, 30, 60].map(min => (
-                <button 
-                  key={min} 
-                  onClick={() => startTimer(min)}
-                  className="bg-slate-800 hover:bg-blue-600 hover:text-white transition-all p-4 rounded-2xl text-sm font-black text-slate-300 border border-white/5 active:scale-95"
-                >
-                  {min} MIN
-                </button>
-              ))}
-            </div>
-            <div className="relative">
-              <input 
-                type="number" 
-                placeholder="Custom Minutes"
-                value={customTimerMinutes}
-                onChange={(e) => setCustomTimerMinutes(e.target.value)}
-                className="w-full bg-slate-950 border border-white/10 rounded-2xl py-3 px-4 text-sm text-white font-bold outline-none focus:border-blue-500"
-              />
-              {customTimerMinutes && (
-                <button 
-                  onClick={() => startTimer(parseInt(customTimerMinutes))}
-                  className="absolute right-2 top-1.5 bottom-1.5 bg-blue-600 px-4 rounded-xl text-[10px] font-black uppercase text-white hover:bg-blue-500 transition-colors"
-                >
-                  Start
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
+    <div className="space-y-6 animate-in fade-in duration-700">
       <div className="glass p-5 rounded-[2.5rem] border border-white/5 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -342,23 +203,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        {/* Safety Timer UI: Active vs Inactive */}
-        {timerTarget ? (
-           <div className="glass p-5 rounded-[2rem] border border-blue-500/30 flex flex-col items-center bg-blue-900/10 shadow-[0_0_20px_rgba(37,99,235,0.1)]">
-             <div className="text-2xl font-black text-blue-400 mono animate-pulse mb-1">{timeLeftStr}</div>
-             <p className="text-[8px] font-bold text-blue-300 uppercase tracking-widest mb-3">Timer Active</p>
-             <button onClick={cancelTimer} className="bg-green-600 text-[9px] font-bold px-4 py-2 rounded-full text-white hover:bg-green-500 transition-colors shadow-lg active:scale-95 flex items-center gap-1">
-               <CheckCircle2 size={12} /> I'M SAFE (CANCEL)
-             </button>
-           </div>
-        ) : (
-          <button onClick={() => setShowTimerModal(true)} className="glass p-5 rounded-[2rem] border border-white/5 flex flex-col items-center cursor-pointer hover:bg-slate-800/50 transition-colors group">
-            <Timer size={18} className="text-blue-500 mb-3 group-hover:scale-110 transition-transform" />
-            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest italic group-hover:text-white transition-colors">Safety Timer</p>
-          </button>
-        )}
-
-        <button onClick={() => triggerSOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl active:scale-95 transition-transform hover:bg-red-900/30">
+        <div className="glass p-5 rounded-[2rem] border border-white/5 flex flex-col items-center opacity-30">
+          <Timer size={18} className="text-blue-500 mb-3" />
+          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest italic">Safety Timer</p>
+        </div>
+        <button onClick={() => triggerSOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl">
           <ShieldAlert size={18} className="text-red-500 mb-3" />
           <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest italic">Instant Signal</p>
         </button>

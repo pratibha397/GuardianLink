@@ -37,7 +37,6 @@ export interface AppSettings {
   checkInDuration: number; // minutes
   contacts: EmergencyContact[];
   isListening: boolean;
-  isTimerActive?: boolean; // Keeps screen awake when timer is running
   primaryGuardianEmail?: string; // Target for automated danger alerts
   onboarded: boolean; // Flag to track if user has completed setup
 }

@@ -15,7 +15,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   checkInDuration: 15,
   contacts: [],
   isListening: false,
-  isTimerActive: false,
   onboarded: false
 };
 
@@ -23,19 +22,21 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem('guardian_user');
-      const isAuth = localStorage.getItem('isAuthenticated');
-      return (saved && isAuth === 'true') ? JSON.parse(saved) : null;
+      return saved ? JSON.parse(saved) : null;
     } catch {
       return null;
     }
   });
   
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
+  
+  // Persistence Fix: Ensure robust read from localStorage on mount
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem(SETTINGS_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        // Ensure contacts is always an array
         return { ...DEFAULT_SETTINGS, ...parsed, contacts: parsed.contacts || [] };
       } catch {
         return DEFAULT_SETTINGS;
@@ -50,22 +51,21 @@ const App: React.FC = () => {
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
   const wakeLockRef = useRef<any>(null);
 
+  // Sync settings to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
+  // Background Execution Fix: Robust Screen Wake Lock implementation
   useEffect(() => {
-    const shouldKeepAwake = settings.isListening || settings.isTimerActive;
     const requestWakeLock = async () => {
-      if ('wakeLock' in navigator && shouldKeepAwake) {
+      if ('wakeLock' in navigator && settings.isListening) {
         try {
-          if (!wakeLockRef.current) {
-            wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-          }
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
         } catch (err) {
           console.error("Wake Lock failed:", err);
         }
-      } else if (!shouldKeepAwake && wakeLockRef.current) {
+      } else if (!settings.isListening && wakeLockRef.current) {
         try {
           await wakeLockRef.current.release();
           wakeLockRef.current = null;
@@ -74,17 +74,27 @@ const App: React.FC = () => {
         }
       }
     };
+
+    // Initial request
     requestWakeLock();
+
+    // Re-acquire lock if tab visibility changes (browser often releases lock on hide)
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && shouldKeepAwake) requestWakeLock();
+      if (document.visibilityState === 'visible' && settings.isListening) {
+        requestWakeLock();
+      }
     };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (wakeLockRef.current) wakeLockRef.current.release().catch(() => {});
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+      }
     };
-  }, [settings.isListening, settings.isTimerActive]);
+  }, [settings.isListening]);
 
+  // Cloud Sync: Merge cloud data with local data carefully
   useEffect(() => {
     if (!user) return;
     const fetchSettings = async () => {
@@ -92,14 +102,18 @@ const App: React.FC = () => {
         const userEmail = user.email.toLowerCase();
         const docRef = doc(db, "settings", userEmail);
         const docSnap = await getDoc(docRef);
+        
         if (docSnap.exists()) {
           const cloudData = docSnap.data() as AppSettings;
           setSettings(prev => ({
             ...prev,
             ...cloudData,
+            // Prioritize local contacts if cloud is empty but local isn't (optional safety)
+            // But generally cloud is truth. Here we ensure array structure.
             contacts: Array.isArray(cloudData.contacts) ? cloudData.contacts : []
           }));
         } else {
+          // If no cloud settings, push current local settings to cloud
           await setDoc(docRef, settings);
         }
       } catch (e) {
@@ -109,7 +123,6 @@ const App: React.FC = () => {
     fetchSettings();
   }, [user?.email]);
 
-  // --- FIXED MONITORING LOGIC ---
   useEffect(() => {
     if (!user || !settings.contacts || settings.contacts.length === 0) return;
     let alertActive = false;
@@ -140,35 +153,8 @@ const App: React.FC = () => {
             const latest = msgs.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
             const isFromOther = latest.senderEmail.toLowerCase() !== user.email.toLowerCase();
             const isSOS = latest.type === 'location' || /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
-            
             if (isFromOther && isSOS && (Date.now() - latest.timestamp < 120000)) {
-              
-              // 1. Trigger Audio Alarm (Only if not already playing)
-              if (!alertActive) { 
-                alertActive = true; 
-                playAlert(); 
-              }
-
-              // 2. Trigger Browser Notification (Always trigger)
-              if ("Notification" in window) {
-                const showNotification = async () => {
-                  if (Notification.permission === "granted") {
-                    new Notification("🚨 Incoming Emergency", {
-                      body: `${latest.senderName || 'Contact'}: ${latest.text}`,
-                      icon: "https://cdn-icons-png.flaticon.com/512/889/889647.png"
-                    });
-                  } else if (Notification.permission !== "denied") {
-                    const permission = await Notification.requestPermission();
-                    if (permission === "granted") {
-                      new Notification("🚨 Incoming Emergency", {
-                        body: `${latest.senderName || 'Contact'}: ${latest.text}`,
-                        icon: "https://cdn-icons-png.flaticon.com/512/889/889647.png"
-                      });
-                    }
-                  }
-                };
-                showNotification();
-              }
+              if (!alertActive) { alertActive = true; playAlert(); }
             }
           }
         }
@@ -185,11 +171,11 @@ const App: React.FC = () => {
       window.removeEventListener('touchstart', handleInteraction);
     };
   }, [user?.email, settings.contacts]);
-  // --- END FIXED MONITORING LOGIC ---
 
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
+    // Explicitly write to local storage immediately to prevent race conditions on reload
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
     if (user) await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
   };
@@ -207,7 +193,6 @@ const App: React.FC = () => {
   const handleLogout = () => {
     auth.signOut().catch(() => {});
     localStorage.clear();
-    localStorage.removeItem('isAuthenticated');
     setUser(null);
     setSettings(DEFAULT_SETTINGS);
     setAppView(AppView.DASHBOARD);
@@ -219,7 +204,6 @@ const App: React.FC = () => {
         onLogin={(u: User) => { 
           setUser(u); 
           localStorage.setItem('guardian_user', JSON.stringify(u)); 
-          localStorage.setItem('isAuthenticated', 'true');
         }} 
       />
     );
