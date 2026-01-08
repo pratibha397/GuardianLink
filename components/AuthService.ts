@@ -1,4 +1,3 @@
-
 export const AuthService = {
   sendLoginOTP: async (email: string): Promise<boolean> => {
     // Simulate network delay
