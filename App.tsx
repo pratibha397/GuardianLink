@@ -1,11 +1,10 @@
-
 import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
-import { auth, db, doc, getDoc, onAuthStateChanged, onValue, ref, rtdb, setDoc, signInAnonymously, signOut } from './services/firebase';
+import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
 import { AlertLog, AppSettings, AppView, ChatMessage, EmergencyContact, User } from './types';
 
 const SETTINGS_KEY = 'guardian_link_v4';
@@ -54,27 +53,11 @@ const App: React.FC = () => {
   });
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
   const wakeLockRef = useRef<any>(null);
-  
-  // Track processed message IDs to prevent duplicate notifications during a session
-  const processedMessageIds = useRef<Set<string>>(new Set());
 
   // Sync settings to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
-
-  // FIX: Ensure Anonymous Auth is active for Firebase RLS
-  useEffect(() => {
-    if (user) {
-      const unsubscribe = onAuthStateChanged(auth, (u) => {
-        if (!u) {
-          console.log("Restoring anonymous session...");
-          signInAnonymously(auth).catch((e) => console.error("Auth restore failed:", e));
-        }
-      });
-      return () => unsubscribe();
-    }
-  }, [user]);
 
   // Background Execution Fix: Robust Screen Wake Lock implementation
   // Keeps screen on if LISTENING OR TIMER IS ACTIVE
@@ -148,6 +131,7 @@ const App: React.FC = () => {
     fetchSettings();
   }, [user?.email]);
 
+  // --- MODIFIED MONITORING LOGIC START ---
   useEffect(() => {
     if (!user || !settings.contacts || settings.contacts.length === 0) return;
     let alertActive = false;
@@ -177,31 +161,27 @@ const App: React.FC = () => {
           if (msgs.length > 0) {
             const latest = msgs.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
             const isFromOther = latest.senderEmail.toLowerCase() !== user.email.toLowerCase();
-            const timeDiff = Date.now() - latest.timestamp;
+            const isSOS = latest.type === 'location' || /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
+            if (isFromOther && isSOS && (Date.now() - latest.timestamp < 120000)) {
+              if (!alertActive) { 
+                alertActive = true; 
+                playAlert();
 
-            // Only process if it's a FRESH message (within last 15 seconds)
-            // and we haven't already processed this specific message ID
-            if (isFromOther && timeDiff < 15000 && !processedMessageIds.current.has(latest.id)) {
-              processedMessageIds.current.add(latest.id);
-
-              const isSOS = latest.type === 'location' || /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
-              
-              // 1. SOS Audio Alert Logic
-              if (isSOS) {
-                if (!alertActive) { alertActive = true; playAlert(); }
-              }
-
-              // 2. Generic Browser Notification
-              if (Notification.permission === 'granted') {
-                try {
-                  const title = isSOS ? `🚨 SOS: ${latest.senderName}` : `Message from ${latest.senderName}`;
-                  new Notification(title, {
-                    body: latest.text,
-                    icon: 'https://cdn-icons-png.flaticon.com/512/1063/1063376.png',
-                    tag: latest.id // Prevent duplicate notifications at OS level
+                // FIX: Trigger Browser Notification
+                if (Notification.permission === "granted") {
+                  new Notification("🚨 Incoming Emergency", {
+                    body: `${latest.senderName || 'Contact'}: ${latest.text}`,
+                    icon: "https://cdn-icons-png.flaticon.com/512/889/889647.png"
                   });
-                } catch (e) {
-                  console.error("Notification failed", e);
+                } else if (Notification.permission !== "denied") {
+                  Notification.requestPermission().then(permission => {
+                    if (permission === "granted") {
+                      new Notification("🚨 Incoming Emergency", {
+                        body: `${latest.senderName || 'Contact'}: ${latest.text}`,
+                        icon: "https://cdn-icons-png.flaticon.com/512/889/889647.png"
+                      });
+                    }
+                  });
                 }
               }
             }
@@ -220,6 +200,7 @@ const App: React.FC = () => {
       window.removeEventListener('touchstart', handleInteraction);
     };
   }, [user?.email, settings.contacts]);
+  // --- MODIFIED MONITORING LOGIC END ---
 
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
@@ -240,7 +221,7 @@ const App: React.FC = () => {
   }, [activeAlertId]);
 
   const handleLogout = () => {
-    signOut(auth).catch(() => {});
+    auth.signOut().catch(() => {});
     localStorage.clear();
     localStorage.removeItem('isAuthenticated');
     setUser(null);
