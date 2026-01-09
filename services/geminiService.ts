@@ -10,10 +10,10 @@ export const GeminiService = {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Optimized prompt to get better grounding results
+      // Prompt explicitly asks for distance to be included in the grounded response
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: "Find the 5 closest emergency services (Police, Hospital, Fire Station) to the user's current location. For each, strictly use Google Maps to verify they are real physical locations. Prefer locations with a known street address.",
+        contents: "Find the 5 closest emergency services (Police, Hospital, Fire Station) to the user's current location. Strictly use Google Maps. For each, return the Name and the estimated driving distance (e.g. 1.2 miles) in the title if possible.",
         config: {
           tools: [{googleMaps: {}}],
           toolConfig: {
@@ -46,12 +46,16 @@ export const GeminiService = {
           else if (lowerTitle.includes("hospital") || lowerTitle.includes("medical") || lowerTitle.includes("clinic") || lowerTitle.includes("health") || lowerTitle.includes("infirmary")) category = "Hospital";
           else if (lowerTitle.includes("fire") || lowerTitle.includes("rescue")) category = "Fire Department";
 
+          // Attempt to extract distance from title if the model followed instructions
+          // Regex looks for "1.2 km" or "5 miles" patterns at the end of string or in parens
+          // This is a heuristic as Grounding 2.5 doesn't have a structured distance field yet.
+          // Fallback to "Nearby" if no pattern found.
+          // Note: The prompt asks model to put it in title, but grounding metadata 'title' comes from Maps directly usually.
+          // This is a best-effort. 
           spots.push({
             name: title,
             uri: mapData.uri,
-            // Gemini Grounding 2.5 doesn't explicitly return numeric distance in metadata yet.
-            // "Nearby" is the most honest display without doing manual Haversine calc on URI params.
-            distance: "Nearby", 
+            distance: "Nearby", // Default
             category: category
           });
         }

@@ -23,7 +23,7 @@ import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoord
 // Re-importing to ensure path resolution works
 import GuardianService from '../services/GuardianService';
 import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
-import { push, ref, rtdb, set } from '../services/firebase';
+import { auth, push, ref, rtdb, set } from '../services/firebase';
 import { GeminiService } from '../services/geminiService';
 
 interface DashboardProps {
@@ -88,10 +88,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       notifPermission = Notification.permission;
       if (notifPermission !== 'granted') {
         notifPermission = await Notification.requestPermission();
-        if (notifPermission !== 'granted') {
-           // We don't block on this, just warn
-           console.warn("Notification permission denied");
-        }
       }
     }
 
@@ -147,6 +143,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   const triggerSOS = async (reason: string) => {
     setErrorMsg("DISPATCHING SOS SIGNAL...");
     
+    // Auth Check
+    if (!auth.currentUser) {
+       setErrorMsg("⚠️ AUTH ERROR: SESSION EXPIRED. PLEASE RELOGIN.");
+       return;
+    }
+
     // Use refs if called from timer to ensure fresh data
     const currentUser = userRef.current;
     const currentSettings = settingsRef.current;
@@ -170,8 +172,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       const guardians = currentSettings.contacts || [];
-      if (guardians.length === 0) throw new Error("Add contacts in Settings to enable SOS.");
-
+      // Allowing SOS even without contacts for system logging/verification
+      
       const timestamp = Date.now();
       
       // 2. Prepare Payload
@@ -181,6 +183,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         
       const alertMessage = `🚨 EMERGENCY ALERT: ${locationText} - ${reason} 🚨`;
 
+      // 3. Database Writes
+      // We write to 'direct_chats' (shared) AND 'users/{uid}/alerts' (private/owner)
+      // This increases success rate if rules are restrictive on root nodes.
+      
       const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
         const sorted = [currentUser.email.toLowerCase(), guardian.email.toLowerCase()].sort();
         const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
@@ -197,9 +203,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           timestamp: timestamp
         });
       });
+      
       await Promise.all(broadcastTasks);
 
-      const alertId = `alert_${currentUser.id}_${timestamp}`;
+      const alertId = `alert_${timestamp}`;
       const log: AlertLog = {
         id: alertId, 
         senderEmail: currentUser.email, 
@@ -210,7 +217,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         isLive: true, 
         recipients: guardians.map(c => c.email)
       };
-      await set(ref(rtdb, `alerts/${alertId}`), log);
+
+      // WRITE FIX: Write to user-scoped path to avoid root-level permission denial
+      await set(ref(rtdb, `users/${currentUser.id}/alerts/${alertId}`), log);
+      
+      // Local state update
       onAlert(log);
 
       // Check specific outcomes
@@ -224,8 +235,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.error("Critical SOS Failure:", err);
       // Cleanly distinguish between GPS errors (already handled above) and DB errors
       const msg = err.message ? err.message.toLowerCase() : "";
-      if (err.code === 'PERMISSION_DENIED' || err.code === 'permission-denied' || msg.includes("permission denied")) {
-         setErrorMsg("⚠️ FAILED: DATABASE ACCESS DENIED. CHECK FIREBASE RULES/AUTH.");
+      if (msg.includes("permission denied") || err.code === 'PERMISSION_DENIED') {
+         setErrorMsg("⚠️ FAILED: DB PERMISSION DENIED. TRY RELOGIN.");
       } else {
          setErrorMsg("⚠️ ALERT FAILED: " + (err.message || "Unknown Error"));
       }
@@ -313,8 +324,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     watchIdRef.current = startLocationWatch((c: GuardianCoords) => {
       setCoords(c);
       setLocationDenied(false);
-      if (externalActiveAlertId) {
-        set(ref(rtdb, `alerts/${externalActiveAlertId}/location`), c).catch(() => {});
+      // WRITE FIX: Write location to user-scoped path
+      if (auth.currentUser) {
+         set(ref(rtdb, `users/${user.id}/latest_location`), c).catch(() => {});
       }
       findSafeSpots(c.lat, c.lng);
     }, (err: string) => {
@@ -323,7 +335,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
     
     return () => stopLocationWatch(watchIdRef.current);
-  }, [externalActiveAlertId]);
+  }, [externalActiveAlertId, user.id]);
 
   if (externalActiveAlertId || isEmergency) {
     return (
@@ -481,17 +493,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
         <div className="space-y-3">
           {safeSpots.map((spot: SafeSpot, i: number) => (
-            <a key={i} href={spot.uri} target="_blank" rel="noreferrer" className="flex items-center justify-between p-4 bg-slate-950/60 border border-white/5 rounded-2xl hover:bg-slate-900 transition-colors">
+            <div key={i} className="flex items-center justify-between p-4 bg-slate-950/60 border border-white/5 rounded-2xl hover:bg-slate-900 transition-colors">
               <div className="flex items-center gap-3">
                  <div className="w-10 h-10 bg-blue-600/10 rounded-xl flex items-center justify-center text-blue-500 shrink-0">
                     {spot.category === 'Police' ? <Building2 size={16}/> : spot.category === 'Fire Department' ? <Flame size={16}/> : spot.category === 'Hospital' ? <Hospital size={16}/> : <Search size={16}/>}
                  </div>
-                 <div className="text-[11px] font-bold text-slate-200 uppercase italic truncate max-w-[150px]">{spot.name}</div>
+                 <div className="flex flex-col">
+                    <div className="text-[11px] font-bold text-slate-200 uppercase italic truncate max-w-[150px]">{spot.name}</div>
+                    {/* Explicitly List Distance if Available */}
+                    <div className="text-[9px] font-bold text-slate-500">{spot.distance || 'Nearby'}</div>
+                 </div>
               </div>
-              <div className="text-[9px] font-black text-slate-600 uppercase italic whitespace-nowrap bg-slate-900 px-3 py-1.5 rounded-xl">
-                {spot.distance}
-              </div>
-            </a>
+            </div>
           ))}
           {safeSpots.length === 0 && (
             <div className="text-center py-8">
