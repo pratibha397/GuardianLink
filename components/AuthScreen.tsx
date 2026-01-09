@@ -1,6 +1,14 @@
-import { AlertCircle, ArrowRight, Mail, RefreshCw, Shield, User as UserIcon } from 'lucide-react';
+import { AlertCircle, ArrowRight, Eye, EyeOff, Lock, Mail, RefreshCw, Shield, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
-import { auth, db, doc, getDoc, setDoc, signInAnonymously } from '../services/firebase';
+import {
+  auth,
+  createUserWithEmailAndPassword,
+  db,
+  doc,
+  getDoc,
+  setDoc,
+  signInWithEmailAndPassword
+} from '../services/firebase';
 import { User } from '../types';
 
 interface AuthScreenProps {
@@ -11,176 +19,231 @@ type AuthMode = 'LOGIN' | 'REGISTER';
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [mode, setMode] = useState<AuthMode>('LOGIN');
+  
+  // Form State
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  
+  // UI State
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    
-    // Basic Validation
+    setLoading(true);
+
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
 
-    if (!cleanEmail.includes('@')) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-
-    if (mode === 'REGISTER' && cleanName.length < 2) {
-      setError("Please enter your full name.");
-      return;
-    }
-
-    setLoading(true);
-
     try {
-      // 1. Ensure we have a Firebase Session (Anonymous allows DB reads)
-      if (!auth.currentUser) {
-        await signInAnonymously(auth);
-      }
-
-      // 2. Check Database for existing user
-      const userRef = doc(db, "users", cleanEmail);
-      const userSnap = await getDoc(userRef);
-
       if (mode === 'REGISTER') {
-        if (userSnap.exists()) {
-          setError("Account already exists. Please Sign In.");
-          setLoading(false);
-          return;
+        // --- REGISTRATION FLOW ---
+        
+        // 1. Validate Input
+        if (cleanName.length < 2) throw new Error("Please enter your full name.");
+        if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+
+        // 2. Create Auth User
+        try {
+          const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+          const firebaseUser = userCredential.user;
+
+          if (!firebaseUser) throw new Error("Registration failed.");
+
+          // 3. Create Firestore User Profile
+          const newUser: User = {
+            id: firebaseUser.uid,
+            email: cleanEmail,
+            name: cleanName
+          };
+
+          await setDoc(doc(db, "users", cleanEmail), newUser);
+          
+          // 4. Complete Login
+          onLogin(newUser);
+
+        } catch (authErr: any) {
+          if (authErr.code === 'auth/email-already-in-use') {
+            throw new Error("This email is already registered. Please Login.");
+          }
+          throw authErr;
         }
-
-        // Create New User
-        const newUser: User = {
-          id: `user_${Date.now()}`,
-          email: cleanEmail,
-          name: cleanName
-        };
-
-        await setDoc(userRef, newUser);
-        onLogin(newUser);
 
       } else {
-        // Login Mode
-        if (!userSnap.exists()) {
-          setError("Account not found. Please Create an Account.");
-          setLoading(false);
-          return;
-        }
+        // --- LOGIN FLOW ---
+        
+        // 1. Authenticate
+        try {
+          const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+          const firebaseUser = userCredential.user;
+          
+          if (!firebaseUser) throw new Error("Authentication failed.");
 
-        const userData = userSnap.data() as User;
-        onLogin(userData);
+          // 2. Fetch User Profile
+          const userDoc = await getDoc(doc(db, "users", cleanEmail));
+          
+          let userData: User;
+          if (userDoc.exists()) {
+            userData = userDoc.data() as User;
+          } else {
+            // Fallback if auth exists but firestore doc is missing (legacy/error case)
+            userData = {
+              id: firebaseUser.uid,
+              email: cleanEmail,
+              name: firebaseUser.displayName || "Guardian User"
+            };
+            // Restore doc
+            await setDoc(doc(db, "users", cleanEmail), userData);
+          }
+
+          onLogin(userData);
+
+        } catch (authErr: any) {
+          if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/wrong-password' || authErr.code === 'auth/invalid-credential') {
+            throw new Error("Invalid email or password.");
+          }
+          if (authErr.code === 'auth/too-many-requests') {
+             throw new Error("Too many failed attempts. Try again later.");
+          }
+          throw authErr;
+        }
       }
 
     } catch (err: any) {
       console.error("Auth Error:", err);
-      // Fallback for demo/offline if DB fails (Simulated Login)
-      if (err.code === 'permission-denied' || err.message.includes('offline')) {
-         const mockUser: User = {
-            id: `user_${Date.now()}`,
-            email: cleanEmail,
-            name: mode === 'REGISTER' ? cleanName : 'Unknown User'
-         };
-         onLogin(mockUser);
-      } else {
-         setError("Connection failed. Please try again.");
-      }
+      // Strip "Error:" prefix if present for cleaner UI
+      const msg = err.message?.replace('Firebase: ', '') || "An unknown error occurred.";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleMode = () => {
-    setMode(mode === 'LOGIN' ? 'REGISTER' : 'LOGIN');
-    setError(null);
-  };
-
   return (
-    <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6 sm:p-12 relative overflow-hidden">
-      {/* Background Elements */}
-      <div className="absolute top-1/4 -left-20 w-96 h-96 bg-blue-600/10 rounded-full blur-[100px]" />
-      <div className="absolute bottom-1/4 -right-20 w-96 h-96 bg-blue-900/10 rounded-full blur-[100px]" />
-
-      <div className="w-full max-w-[400px] space-y-8 relative z-10">
-        <div className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-600 rounded-3xl shadow-[0_20px_40px_rgba(37,99,235,0.3)] border-b-4 border-blue-800">
-            <Shield size={40} className="text-white fill-blue-400/20" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-3xl font-extrabold text-white tracking-tight">GuardianLink</h1>
-            <p className="text-sm font-medium text-slate-500 italic">Safety & Security simplified.</p>
-          </div>
+    <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
+      {/* Ambient Background */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-600/5 rounded-full blur-[120px] pointer-events-none" />
+      
+      {/* Logo Section */}
+      <div className="relative z-10 flex flex-col items-center mb-10 animate-in fade-in slide-in-from-top-5 duration-700">
+        <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-blue-700 rounded-[2rem] shadow-[0_20px_60px_-10px_rgba(37,99,235,0.5)] flex items-center justify-center mb-6 transform hover:scale-105 transition-transform duration-500 border border-white/10">
+          <Shield size={48} className="text-white drop-shadow-md" />
         </div>
+        <h1 className="text-4xl font-extrabold text-white tracking-tight mb-2">GuardianLink</h1>
+        <p className="text-slate-400 font-medium italic tracking-wide text-sm">Safety & Security simplified.</p>
+      </div>
 
-        <div className="glass p-8 rounded-[2.5rem] border border-white/5 shadow-2xl relative overflow-hidden">
-          {/* Toggle Tabs */}
-          <div className="flex bg-slate-950/50 p-1 rounded-2xl mb-8 border border-white/5">
+      {/* Auth Card */}
+      <div className="w-full max-w-[400px] relative z-10 animate-in fade-in slide-in-from-bottom-5 duration-700 delay-150">
+        <div className="glass bg-[#0f172a]/60 backdrop-blur-xl rounded-[2.5rem] p-2 border border-white/5 shadow-2xl">
+          
+          {/* Tabs */}
+          <div className="flex bg-[#020617]/50 rounded-[2rem] p-1.5 mb-8 relative">
             <button 
               onClick={() => { setMode('LOGIN'); setError(null); }}
-              className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'LOGIN' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+              className={`flex-1 py-4 rounded-[1.7rem] text-xs font-black uppercase tracking-widest transition-all duration-300 relative z-10 ${mode === 'LOGIN' ? 'text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
             >
-              Sign In
+              Login
             </button>
             <button 
               onClick={() => { setMode('REGISTER'); setError(null); }}
-              className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'REGISTER' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+              className={`flex-1 py-4 rounded-[1.7rem] text-xs font-black uppercase tracking-widest transition-all duration-300 relative z-10 ${mode === 'REGISTER' ? 'text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
             >
-              Create Account
+              Register
             </button>
+            
+            {/* Sliding Background */}
+            <div 
+              className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-blue-600 rounded-[1.7rem] transition-all duration-300 ease-out shadow-lg shadow-blue-600/20 ${mode === 'REGISTER' ? 'translate-x-full left-0' : 'left-1.5'}`} 
+            />
           </div>
 
-          <form onSubmit={handleAuth} className="space-y-5 animate-in fade-in slide-in-from-right duration-300">
-            <div className="space-y-2 text-center mb-6">
-              <h2 className="text-xl font-bold text-white">
-                {mode === 'LOGIN' ? 'Welcome Back' : 'Join the Network'}
-              </h2>
-              <p className="text-xs text-slate-500 font-medium">
-                {mode === 'LOGIN' ? 'Access your secure dashboard' : 'Set up your Guardian identity'}
-              </p>
-            </div>
-            
+          <form onSubmit={handleAuth} className="px-6 pb-6 space-y-5">
             {mode === 'REGISTER' && (
-              <div className="relative group animate-in fade-in slide-in-from-top-2">
-                <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
-                <input 
-                  type="text" required placeholder="Full Name" value={name} 
-                  onChange={(e) => setName(e.target.value)} 
-                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
-                />
+              <div className="space-y-4 animate-in fade-in slide-in-from-right duration-300">
+                <div className="relative group">
+                  <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors">
+                    <UserIcon size={18} />
+                  </div>
+                  <input 
+                    type="text" 
+                    placeholder="Full Name" 
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-[#020617] border border-white/5 rounded-2xl py-4 pl-12 pr-5 text-sm font-bold text-white placeholder:text-slate-600 outline-none focus:border-blue-500/50 transition-all focus:bg-[#020617]/80"
+                    required
+                  />
+                </div>
               </div>
             )}
 
             <div className="relative group">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors">
+                <Mail size={18} />
+              </div>
               <input 
-                type="email" required placeholder="Email Address" value={email} 
-                onChange={(e) => setEmail(e.target.value)} 
-                className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
+                type="email" 
+                placeholder="Email Address" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-[#020617] border border-white/5 rounded-2xl py-4 pl-12 pr-5 text-sm font-bold text-white placeholder:text-slate-600 outline-none focus:border-blue-500/50 transition-all focus:bg-[#020617]/80"
+                required
               />
             </div>
 
+            <div className="relative group">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors">
+                <Lock size={18} />
+              </div>
+              <input 
+                type={showPassword ? "text" : "password"} 
+                placeholder="Password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-[#020617] border border-white/5 rounded-2xl py-4 pl-12 pr-12 text-sm font-bold text-white placeholder:text-slate-600 outline-none focus:border-blue-500/50 transition-all focus:bg-[#020617]/80"
+                required
+              />
+              <button 
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+
             <button 
-              type="submit" disabled={loading} 
-              className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-4"
+              type="submit" 
+              disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black uppercase text-xs tracking-[0.2em] py-5 rounded-2xl shadow-[0_10px_40px_-10px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-70 disabled:cursor-not-allowed mt-4 flex items-center justify-center gap-2 group"
             >
-              {loading ? <RefreshCw className="animate-spin" size={16}/> : (mode === 'LOGIN' ? 'Authenticate' : 'Register Identity')} <ArrowRight size={16} />
+              {loading ? (
+                <>
+                  <RefreshCw className="animate-spin" size={16} /> Processing
+                </>
+              ) : (
+                <>
+                  {mode === 'LOGIN' ? 'Login' : 'Register'} <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                </>
+              )}
             </button>
           </form>
-
-          {error && (
-            <div className="mt-6 flex items-center gap-3 bg-red-500/10 border border-red-500/20 p-4 rounded-2xl animate-in slide-in-from-top-1">
-              <AlertCircle size={16} className="text-red-500 shrink-0" />
-              <p className="text-[11px] font-bold text-red-400 uppercase tracking-tight">{error}</p>
-            </div>
-          )}
         </div>
-        
-        <p className="text-center text-[10px] text-slate-600 font-bold uppercase tracking-widest">
-          Secured by Aegis Mesh Protocol
-        </p>
+
+        {/* Error Message */}
+        {error && (
+          <div className="mt-6 mx-4 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 animate-in slide-in-from-top-2">
+            <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
+            <p className="text-xs font-bold text-red-400 leading-relaxed">{error}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="absolute bottom-6 text-center">
+         <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">Secured by Aegis Mesh Protocol</p>
       </div>
     </div>
   );
