@@ -10,9 +10,10 @@ export const GeminiService = {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // Optimized prompt to get better grounding results
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: "List the 5 nearest real-world emergency services (Police, Hospital, Fire) to the provided location. Use Google Maps to verify they exist. If none found, return nothing.",
+        contents: "Find the 5 closest emergency services (Police, Hospital, Fire Station) to the user's current location. For each, strictly use Google Maps to verify they are real physical locations. Prefer locations with a known street address.",
         config: {
           tools: [{googleMaps: {}}],
           toolConfig: {
@@ -41,14 +42,16 @@ export const GeminiService = {
           const lowerTitle = title.toLowerCase();
           let category = "Emergency";
           
-          if (lowerTitle.includes("police") || lowerTitle.includes("sheriff")) category = "Police";
-          else if (lowerTitle.includes("hospital") || lowerTitle.includes("medical") || lowerTitle.includes("clinic") || lowerTitle.includes("health")) category = "Hospital";
-          else if (lowerTitle.includes("fire")) category = "Fire Department";
+          if (lowerTitle.includes("police") || lowerTitle.includes("sheriff") || lowerTitle.includes("constabulary")) category = "Police";
+          else if (lowerTitle.includes("hospital") || lowerTitle.includes("medical") || lowerTitle.includes("clinic") || lowerTitle.includes("health") || lowerTitle.includes("infirmary")) category = "Hospital";
+          else if (lowerTitle.includes("fire") || lowerTitle.includes("rescue")) category = "Fire Department";
 
           spots.push({
             name: title,
             uri: mapData.uri,
-            distance: "Nearby", // Gemini 2.5 grounding often lacks precise distance output
+            // Gemini Grounding 2.5 doesn't explicitly return numeric distance in metadata yet.
+            // "Nearby" is the most honest display without doing manual Haversine calc on URI params.
+            distance: "Nearby", 
             category: category
           });
         }

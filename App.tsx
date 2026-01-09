@@ -78,7 +78,6 @@ const App: React.FC = () => {
   }, []);
 
   // Background Execution Fix: Robust Screen Wake Lock implementation
-  // Keeps screen on if LISTENING OR TIMER IS ACTIVE
   useEffect(() => {
     const shouldKeepAwake = settings.isListening || settings.isTimerActive;
     
@@ -101,10 +100,8 @@ const App: React.FC = () => {
       }
     };
 
-    // Initial request
     requestWakeLock();
 
-    // Re-acquire lock if tab visibility changes (browser often releases lock on hide)
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && shouldKeepAwake) {
         requestWakeLock();
@@ -125,8 +122,8 @@ const App: React.FC = () => {
     if (!user || !isAuthReady) return;
     const fetchSettings = async () => {
       try {
-        const userEmail = user.email.toLowerCase();
-        const docRef = doc(db, "settings", userEmail);
+        // PERMISSION FIX: Use User ID (uid) instead of email for document key
+        const docRef = doc(db, "settings", user.id);
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
@@ -134,8 +131,6 @@ const App: React.FC = () => {
           setSettings(prev => ({
             ...prev,
             ...cloudData,
-            // Prioritize local contacts if cloud is empty but local isn't (optional safety)
-            // But generally cloud is truth. Here we ensure array structure.
             contacts: Array.isArray(cloudData.contacts) ? cloudData.contacts : []
           }));
         } else {
@@ -147,7 +142,7 @@ const App: React.FC = () => {
       }
     };
     fetchSettings();
-  }, [user?.email, isAuthReady]);
+  }, [user?.id, isAuthReady]);
 
   useEffect(() => {
     if (!user || !isAuthReady || !settings.contacts || settings.contacts.length === 0) return;
@@ -180,26 +175,22 @@ const App: React.FC = () => {
             const isFromOther = latest.senderEmail.toLowerCase() !== user.email.toLowerCase();
             const timeDiff = Date.now() - latest.timestamp;
 
-            // Only process if it's a FRESH message (within last 15 seconds)
-            // and we haven't already processed this specific message ID
             if (isFromOther && timeDiff < 15000 && !processedMessageIds.current.has(latest.id)) {
               processedMessageIds.current.add(latest.id);
 
               const isSOS = latest.type === 'location' || /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
               
-              // 1. SOS Audio Alert Logic
               if (isSOS) {
                 if (!alertActive) { alertActive = true; playAlert(); }
               }
 
-              // 2. Generic Browser Notification
               if (Notification.permission === 'granted') {
                 try {
                   const title = isSOS ? `🚨 SOS: ${latest.senderName}` : `Message from ${latest.senderName}`;
                   new Notification(title, {
                     body: latest.text,
                     icon: 'https://cdn-icons-png.flaticon.com/512/1063/1063376.png',
-                    tag: latest.id // Prevent duplicate notifications at OS level
+                    tag: latest.id
                   });
                 } catch (e) {
                   console.error("Notification failed", e);
@@ -225,9 +216,9 @@ const App: React.FC = () => {
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
-    // Explicitly write to local storage immediately to prevent race conditions on reload
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
-    if (user && isAuthReady) await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
+    // PERMISSION FIX: Write to uid path
+    if (user && isAuthReady) await setDoc(doc(db, "settings", user.id), updated, { merge: true });
   };
 
   useEffect(() => {

@@ -54,13 +54,15 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           if (!firebaseUser) throw new Error("Registration failed.");
 
           // 3. Create Firestore User Profile
+          // CRITICAL FIX: Use UID as document Key, not Email. 
+          // This aligns with "allow write: if request.auth.uid == userId" security rules.
           const newUser: User = {
             id: firebaseUser.uid,
             email: cleanEmail,
             name: cleanName
           };
 
-          await setDoc(doc(db, "users", cleanEmail), newUser);
+          await setDoc(doc(db, "users", firebaseUser.uid), newUser);
           
           // 4. Complete Login
           onLogin(newUser);
@@ -82,21 +84,21 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           
           if (!firebaseUser) throw new Error("Authentication failed.");
 
-          // 2. Fetch User Profile
-          const userDoc = await getDoc(doc(db, "users", cleanEmail));
+          // 2. Fetch User Profile using UID
+          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
           
           let userData: User;
           if (userDoc.exists()) {
             userData = userDoc.data() as User;
           } else {
-            // Fallback if auth exists but firestore doc is missing (legacy/error case)
+            // Fallback: If auth exists but Firestore doc is missing (rare/legacy)
+            // Re-create the doc using current auth info
             userData = {
               id: firebaseUser.uid,
               email: cleanEmail,
               name: firebaseUser.displayName || "Guardian User"
             };
-            // Restore doc
-            await setDoc(doc(db, "users", cleanEmail), userData);
+            await setDoc(doc(db, "users", firebaseUser.uid), userData);
           }
 
           onLogin(userData);
@@ -114,7 +116,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
     } catch (err: any) {
       console.error("Auth Error:", err);
-      // Strip "Error:" prefix if present for cleaner UI
       const msg = err.message?.replace('Firebase: ', '') || "An unknown error occurred.";
       setError(msg);
     } finally {
