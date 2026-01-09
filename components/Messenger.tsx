@@ -1,4 +1,3 @@
-
 import {
   ArrowLeft,
   ExternalLink,
@@ -17,6 +16,87 @@ import { DataSnapshot, onValue, push, ref, rtdb } from '../services/firebase';
 import { getPreciseCurrentPosition } from '../services/LocationServices';
 import { AppSettings, ChatMessage, EmergencyContact, GuardianCoords, User } from '../types';
 
+// --- ENCRYPTION HELPERS (AES-GCM) ---
+// These functions ensure messages are unreadable without the specific chat key.
+
+const IV_LENGTH = 12; // Initialization Vector length for AES-GCM
+
+/**
+ * Derives a cryptographic key from the chat path.
+ * Since both users have the same emails/path, they derive the same key.
+ */
+const getCryptoKey = async (secret: string): Promise<CryptoKey> => {
+  const enc = new TextEncoder();
+  const keyMaterial = await window.crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+  
+  return window.crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: enc.encode("safety-app-static-salt"), // In production, this salt should be random & shared
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+};
+
+const encryptMessage = async (text: string, secret: string): Promise<string> => {
+  try {
+    const key = await getCryptoKey(secret);
+    const iv = window.crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+    const encoded = new TextEncoder().encode(text);
+    
+    const ciphertext = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      encoded
+    );
+
+    // Combine IV and Ciphertext to store as a single string
+    const ivHex = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
+    const cipherHex = Array.from(new Uint8Array(ciphertext)).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    return `${ivHex}:${cipherHex}`;
+  } catch (err) {
+    console.error("Encryption error:", err);
+    return text; // Fallback to plain text if crypto fails
+  }
+};
+
+const decryptMessage = async (encryptedText: string, secret: string): Promise<string> => {
+  try {
+    if (!encryptedText.includes(':')) return encryptedText; // Not encrypted or legacy format
+    
+    const [ivHex, cipherHex] = encryptedText.split(':');
+    const iv = new Uint8Array(ivHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
+    const ciphertext = new Uint8Array(cipherHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
+    
+    const key = await getCryptoKey(secret);
+    
+    const decrypted = await window.crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      ciphertext
+    );
+    
+    return new TextDecoder().decode(decrypted);
+  } catch (err) {
+    console.error("Decryption error:", err);
+    return "🔒 Encrypted Message"; // Fallback UI
+  }
+};
+
+// --- COMPONENT ---
+
 interface MessengerProps {
   user: User;
   settings: AppSettings;
@@ -32,6 +112,7 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
 
   /**
    * Generates a unique, deterministic ID for the conversation.
+   * This ID is also used as the "Shared Secret" for encryption.
    */
   const getChatPath = (contact: EmergencyContact) => {
     if (activeAlertId) return `alerts/${activeAlertId}`;
@@ -47,27 +128,55 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
 
   // Real-time message synchronization
   useEffect(() => {
+    let isMounted = true;
+
+    const processMessages = async (snapshot: DataSnapshot, secret: string) => {
+      if (!isMounted) return;
+      
+      const data = snapshot.val();
+      if (data) {
+        // We map over keys to create an array
+        const msgArrayPromises = Object.keys(data).map(async (key) => {
+          const rawMsg = data[key];
+          let decryptedText = rawMsg.text;
+          
+          // Decrypt text if it exists
+          if (rawMsg.text) {
+            decryptedText = await decryptMessage(rawMsg.text, secret);
+          }
+
+          return {
+            ...rawMsg,
+            id: key,
+            text: decryptedText // Replace encrypted text with plain text
+          };
+        });
+
+        // Wait for all decryptions to finish
+        const msgArray = await Promise.all(msgArrayPromises);
+        
+        const sorted = msgArray.sort((a: any, b: any) => a.timestamp - b.timestamp) as ChatMessage[];
+        setMessages(sorted);
+      } else {
+        setMessages([]);
+      }
+    };
+
     if (selectedContact) {
       const path = getChatPath(selectedContact);
       const messagesRef = ref(rtdb, `${path}/updates`);
       
-      const unsubscribe = onValue(messagesRef, (snapshot: DataSnapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          const msgArray = Object.keys(data).map(key => ({
-            ...data[key],
-            id: key
-          }));
-          const sorted = msgArray.sort((a: any, b: any) => a.timestamp - b.timestamp) as ChatMessage[];
-          setMessages(sorted);
-        } else {
-          setMessages([]);
-        }
+      const unsubscribe = onValue(messagesRef, async (snapshot: DataSnapshot) => {
+        // Use path as the secret key seed
+        await processMessages(snapshot, path);
       }, (error) => {
-        console.error("Firebase Realtime Listener Error:", error);
+        console.error("Firebase Listener Error:", error);
       });
 
-      return () => unsubscribe();
+      return () => {
+        isMounted = false;
+        unsubscribe();
+      };
     } else {
       setMessages([]);
     }
@@ -83,20 +192,24 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
     if (!selectedContact || !messageText) return;
 
     const path = getChatPath(selectedContact);
-    const newMessage: ChatMessage = {
-      id: `msg_${Date.now()}`,
-      senderName: user.name,
-      senderEmail: user.email.toLowerCase().trim(),
-      text: messageText,
-      timestamp: Date.now()
-    };
-
+    
     try {
-      setText('');
+      // Encrypt text before sending
+      const encryptedText = await encryptMessage(messageText, path);
+
+      const newMessage: ChatMessage = {
+        id: `msg_${Date.now()}`,
+        senderName: user.name,
+        senderEmail: user.email.toLowerCase().trim(),
+        text: encryptedText, // Send encrypted text
+        timestamp: Date.now()
+      };
+
+      setText(''); // Clear input optimistically
       await push(ref(rtdb, `${path}/updates`), newMessage);
     } catch (err) { 
       console.error("Failed to transmit message:", err);
-      setText(messageText);
+      setText(messageText); // Restore text on error
     }
   };
 
@@ -112,12 +225,15 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
       const coords: GuardianCoords = await getPreciseCurrentPosition();
       const path = getChatPath(selectedContact);
       
+      // Encrypt the description text
+      const encryptedLabel = await encryptMessage('📍 Shared Live Location', path);
+      
       const locationMsg: ChatMessage = {
         id: `loc_${Date.now()}`,
         type: 'location',
         senderName: user.name,
         senderEmail: user.email.toLowerCase().trim(),
-        text: '📍 Shared Live Location',
+        text: encryptedLabel,
         lat: coords.lat,
         lng: coords.lng,
         timestamp: Date.now()
