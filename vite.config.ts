@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, (process as any).cwd(), '');
   
   const envDefinitions = Object.keys(env).reduce((acc, key) => {
-    if (key.startsWith('FIREBASE_') || key === 'API_KEY' || key === 'AZURE_MAPS_KEY') {
+    if (key.startsWith('FIREBASE_') || key === 'API_KEY') {
       acc[`process.env.${key}`] = JSON.stringify(env[key] || "");
     }
     return acc;

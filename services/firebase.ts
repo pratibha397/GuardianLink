@@ -1,11 +1,39 @@
-import firebase from "firebase/compat/app";
-import "firebase/compat/auth";
-import "firebase/compat/database";
-import "firebase/compat/firestore";
 
-// Define User type alias for export compatibility
-export type FirebaseUser = firebase.User;
-export type DataSnapshot = firebase.database.DataSnapshot;
+import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  updateProfile,
+  type Auth
+} from "firebase/auth";
+import {
+  getDatabase,
+  onValue,
+  push,
+  ref,
+  set,
+  update,
+  type DataSnapshot,
+  type Database
+} from "firebase/database";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  type Firestore
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY || "",
@@ -18,78 +46,25 @@ const firebaseConfig = {
 };
 
 // Singleton initialization
-const app = !firebase.apps.length ? firebase.initializeApp(firebaseConfig) : firebase.app();
-const auth = app.auth();
-const db = app.firestore();
-const rtdb = app.database();
+const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// --- Auth Shim ---
-const signInAnonymously = (authInstance: any) => authInstance.signInAnonymously();
-const signOut = (authInstance: any) => authInstance.signOut();
-const onAuthStateChanged = (authInstance: any, observer: any) => authInstance.onAuthStateChanged(observer);
-const sendPasswordResetEmail = (authInstance: any, email: string) => authInstance.sendPasswordResetEmail(email);
-const updateProfile = (user: any, profile: any) => user.updateProfile(profile);
-const signInWithEmailAndPassword = (authInstance: any, e: string, p: string) => authInstance.signInWithEmailAndPassword(e, p);
-const createUserWithEmailAndPassword = (authInstance: any, e: string, p: string) => authInstance.createUserWithEmailAndPassword(e, p);
-const signInWithPopup = (authInstance: any, provider: any) => authInstance.signInWithPopup(provider);
-const GoogleAuthProvider = firebase.auth.GoogleAuthProvider;
+// Explicitly pass app to all services to prevent "Component not registered" errors
+export const auth: Auth = getAuth(app);
+export const rtdb: Database = getDatabase(app);
 
-// --- Firestore Shim ---
-const doc = (firestoreOrColl: any, ...args: string[]) => {
-  // Handle doc(db, 'collection', 'id') -> db.collection('collection').doc('id')
-  if (args.length === 2) { 
-    return firestoreOrColl.collection(args[0]).doc(args[1]);
-  }
-  // Handle doc(collection, 'id') -> collection.doc('id')
-  if (args.length === 1) {
-    return firestoreOrColl.doc(args[0]);
-  }
-  return firestoreOrColl.doc(args[0]);
-};
-
-// FIX: Wrap v8 snapshot (where .exists is a prop) to look like v9 snapshot (where .exists() is a function)
-const getDoc = async (ref: any) => {
-  const snap = await ref.get();
-  return {
-    exists: () => snap.exists, // Convert property to function
-    data: () => snap.data(),
-    id: snap.id,
-    ref: snap.ref,
-    metadata: snap.metadata
-  };
-};
-
-const setDoc = (ref: any, data: any, options?: any) => ref.set(data, options);
-const collection = (firestore: any, path: string) => firestore.collection(path);
-const addDoc = (coll: any, data: any) => coll.add(data);
-const updateDoc = (ref: any, data: any) => ref.update(data);
-const onSnapshot = (ref: any, cb: any) => ref.onSnapshot(cb);
-const Timestamp = firebase.firestore.Timestamp;
-const getDocs = (query: any) => query.get();
-
-// Simple Query Builder Shim
-const query = (ref: any, ...fns: any[]) => fns.reduce((r, fn) => fn(r), ref);
-const where = (field: string, op: any, val: any) => (ref: any) => ref.where(field, op, val);
-
-// --- Realtime Database Shim ---
-const ref = (database: any, path: string) => database.ref(path);
-const set = (ref: any, val: any) => ref.set(val);
-const push = (ref: any, val: any) => ref.push(val);
-const remove = (ref: any) => ref.remove();
-const update = (ref: any, val: any) => ref.update(val);
-const onValue = (query: any, cb: (snap: any) => void, cancelCallback?: (error: any) => void) => {
-    query.on('value', cb, cancelCallback);
-    return () => query.off('value', cb);
-};
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+} catch (e) {
+  firestoreInstance = getFirestore(app);
+}
+export const db = firestoreInstance;
 
 export {
-  addDoc, app,
-  auth, collection, createUserWithEmailAndPassword, db,
-  // Firestore
-  doc,
-  getDoc, getDocs, GoogleAuthProvider, onAuthStateChanged, onSnapshot, onValue, push, query,
-  // Realtime Database
-  ref, remove, rtdb, sendPasswordResetEmail, set, setDoc,
-  // Auth
-  signInAnonymously, signInWithEmailAndPassword, signInWithPopup, signOut, Timestamp, update, updateDoc, updateProfile, where
+  collection, createUserWithEmailAndPassword, doc,
+  getDoc, getDocs, onAuthStateChanged, onValue, push, query, ref, sendPasswordResetEmail, set, setDoc, signInWithEmailAndPassword, update, updateDoc, updateProfile, where
 };
+export type { DataSnapshot };
+export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);

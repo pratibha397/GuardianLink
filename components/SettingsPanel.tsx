@@ -1,6 +1,6 @@
 import { AlertCircle, CheckCircle2, Mic, Search, Star, Trash2, UserPlus, Wifi } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { collection, db, getDocs, query, where } from '../services/firebase';
+import { db, doc, getDoc } from '../services/firebase';
 import { AppSettings, EmergencyContact } from '../types';
 
 interface SettingsPanelProps {
@@ -25,14 +25,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, updateSettings 
     setLookupResult(null);
 
     try {
-      // NEW SEARCH METHOD: Query by email field
-      // This allows finding users even though their doc ID is now their UID
-      const usersRef = collection(db, "users");
-      const q = query(usersRef, where("email", "==", normalized));
-      const querySnapshot = await getDocs(q);
+      const userRef = doc(db, "users", normalized);
+      const userSnap = await getDoc(userRef);
       
-      if (!querySnapshot.empty) {
-        const userData = querySnapshot.docs[0].data();
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
         setLookupResult('found');
         if (!newContact.name.trim() && userData && userData.name) {
            setNewContact(prev => ({ ...prev, name: userData.name }));

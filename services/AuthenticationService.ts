@@ -1,6 +1,4 @@
 
-import { auth, signInAnonymously } from './firebase';
-
 export const AuthService = {
   sendLoginOTP: async (email: string): Promise<boolean> => {
     // Simulate network delay
@@ -9,19 +7,7 @@ export const AuthService = {
 
   verifyLoginOTP: async (otp: string): Promise<boolean> => {
     // Mock validation - accept '123456'
-    const isValid = otp === '123456';
-    
-    if (isValid) {
-      try {
-        // Authenticate anonymously with Firebase to allow Database writes
-        // This fixes the "Permission Denied" error for rules requiring auth
-        await signInAnonymously(auth);
-      } catch (error) {
-        console.warn("Anonymous auth failed, continuing locally:", error);
-      }
-    }
-
-    return new Promise((resolve) => setTimeout(() => resolve(isValid), 1500));
+    return new Promise((resolve) => setTimeout(() => resolve(otp === '123456'), 1500));
   },
 
   sendResetOTP: async (email: string): Promise<boolean> => {
