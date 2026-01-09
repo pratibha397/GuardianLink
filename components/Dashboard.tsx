@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
 // Re-importing to ensure path resolution works
 import GuardianService from '../services/GuardianService';
-import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
 import { push, ref, rtdb, set } from '../services/firebase';
 import { GeminiService } from '../services/geminiService';
 
