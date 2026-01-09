@@ -1,30 +1,27 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  Shield, 
-  Timer, 
-  ShieldAlert, 
-  Globe,
-  X, 
-  ExternalLink, 
-  Navigation,
-  Hospital, 
-  Building2, 
-  Flame,
-  Volume2, 
-  Mic, 
-  MicOff, 
-  AlertCircle,
-  Play,
-  Settings as SettingsIcon,
+import {
+  Building2,
   CheckCircle2,
+  ExternalLink,
+  Flame,
+  Globe,
+  Hospital,
+  MapPinOff,
+  Mic,
+  MicOff,
+  Navigation,
   Scan,
-  MapPinOff
+  Shield,
+  ShieldAlert,
+  Timer,
+  Volume2,
+  X
 } from 'lucide-react';
-import { AppSettings, AlertLog, User as AppUser, GuardianCoords, SafeSpot, EmergencyContact } from '../types';
-import { startLocationWatch, stopLocationWatch, getPreciseCurrentPosition } from '../services/LocationService';
-import { GeminiService } from '../services/geminiService';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import GuardianService from '../services/GuardianService';
-import { rtdb, ref, set, push } from '../services/firebase';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
+import { push, ref, rtdb, set } from '../services/firebase';
+import { GeminiService } from '../services/geminiService';
+import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
 
 interface DashboardProps {
   user: AppUser;
@@ -511,12 +508,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="relative p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[10px] font-black text-amber-500 uppercase tracking-widest text-center animate-pulse flex items-center justify-center gap-2 group">
-           <AlertCircle size={14} className="shrink-0" /> <span className="max-w-[80%]">{errorMsg}</span>
-           <button onClick={() => setErrorMsg(null)} className="absolute right-4 p-1 hover:text-white transition-colors"><X size={12} /></button>
-        </div>
-      )}
     </div>
   );
 };
