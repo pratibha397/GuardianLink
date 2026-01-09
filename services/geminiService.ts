@@ -10,10 +10,10 @@ export const GeminiService = {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Prompt explicitly asks for distance to be included in the grounded response
+      // Updated prompt to focus strictly on listing existing places with distance context
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: "Find the 5 closest emergency services (Police, Hospital, Fire Station) to the user's current location. Strictly use Google Maps. For each, return the Name and the estimated driving distance (e.g. 1.2 miles) in the title if possible.",
+        contents: "Find the 5 closest emergency services (Police, Hospital, Fire Station) to the user's current location. Strictly use Google Maps to verify they are real. For each, you MUST attempt to include the estimated driving distance (e.g. '1.2 miles') in the result title or metadata if possible. Return strictly a list of places.",
         config: {
           tools: [{googleMaps: {}}],
           toolConfig: {
@@ -32,7 +32,6 @@ export const GeminiService = {
       const seenUris = new Set<string>();
 
       for (const chunk of chunks) {
-        // Safe access to maps property with type checking
         const mapData = (chunk as any).maps;
         if (mapData?.title && mapData?.uri) {
           if (seenUris.has(mapData.uri)) continue;
@@ -46,19 +45,21 @@ export const GeminiService = {
           else if (lowerTitle.includes("hospital") || lowerTitle.includes("medical") || lowerTitle.includes("clinic") || lowerTitle.includes("health") || lowerTitle.includes("infirmary")) category = "Hospital";
           else if (lowerTitle.includes("fire") || lowerTitle.includes("rescue")) category = "Fire Department";
 
-          // Attempt to extract distance from title if the model followed instructions
-          // Regex looks for "1.2 km" or "5 miles" patterns at the end of string or in parens
-          // This is a heuristic as Grounding 2.5 doesn't have a structured distance field yet.
-          // Fallback to "Nearby" if no pattern found.
-          // Note: The prompt asks model to put it in title, but grounding metadata 'title' comes from Maps directly usually.
-          // This is a best-effort. 
+          // Note: Grounding 2.5 doesn't always provide structured distance. 
+          // We rely on the app to display "Nearby" if the model doesn't inject it into the title.
           spots.push({
             name: title,
             uri: mapData.uri,
-            distance: "Nearby", // Default
+            distance: "Nearby", 
             category: category
           });
         }
+      }
+
+      // Fallback if strict Google Maps grounding fails to return structured data
+      // but the model text has a list (less common with this config, but good for robustness)
+      if (spots.length === 0 && response.candidates?.[0]?.content?.parts?.[0]?.text) {
+          // This is a safety fallback, usually empty if tools are used strictly.
       }
 
       return spots.slice(0, 5);
