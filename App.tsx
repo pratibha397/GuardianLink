@@ -1,10 +1,10 @@
-import { Home, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
+import { Home, Loader2, LogOut, MessageSquare, Settings, Shield } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import Messenger from './components/Messenger';
 import SettingsPanel from './components/SettingsPanel';
-import { auth, db, doc, getDoc, onValue, ref, rtdb, setDoc } from './services/firebase';
+import { auth, db, doc, getDoc, onAuthStateChanged, onValue, ref, rtdb, setDoc, signOut } from './services/firebase';
 import { AlertLog, AppSettings, AppView, ChatMessage, EmergencyContact, User } from './types';
 
 const SETTINGS_KEY = 'guardian_link_v4';
@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   checkInDuration: 15,
   contacts: [],
   isListening: false,
+  isTimerActive: false,
   onboarded: false
 };
 
@@ -22,13 +23,16 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem('guardian_user');
-      return saved ? JSON.parse(saved) : null;
+      const isAuth = localStorage.getItem('isAuthenticated');
+      // Require both user object and auth flag
+      return (saved && isAuth === 'true') ? JSON.parse(saved) : null;
     } catch {
       return null;
     }
   });
   
   const [appView, setAppView] = useState<AppView>(AppView.DASHBOARD);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   
   // Persistence Fix: Ensure robust read from localStorage on mount
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -50,22 +54,44 @@ const App: React.FC = () => {
   });
   const [isEmergency, setIsEmergency] = useState(!!activeAlertId);
   const wakeLockRef = useRef<any>(null);
+  
+  // Track processed message IDs to prevent duplicate notifications during a session
+  const processedMessageIds = useRef<Set<string>>(new Set());
 
   // Sync settings to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  // Background Execution Fix: Robust Screen Wake Lock implementation
+  // AUTH INIT: Wait for Firebase to restore session before rendering app
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u: any) => {
+      setIsAuthReady(true);
+      // If Firebase fails to restore a user session but we have one locally, 
+      // it means the token is invalid/expired. Force logout to prevent DB errors.
+      if (!u && localStorage.getItem('guardian_user')) {
+         console.warn("Session expired or invalid. Logging out.");
+         handleLogout();
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Background Execution Fix: Robust Screen Wake Lock implementation
+  // Keeps screen on if LISTENING OR TIMER IS ACTIVE
+  useEffect(() => {
+    const shouldKeepAwake = settings.isListening || settings.isTimerActive;
+    
     const requestWakeLock = async () => {
-      if ('wakeLock' in navigator && settings.isListening) {
+      if ('wakeLock' in navigator && shouldKeepAwake) {
         try {
-          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          if (!wakeLockRef.current) {
+            wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          }
         } catch (err) {
           console.error("Wake Lock failed:", err);
         }
-      } else if (!settings.isListening && wakeLockRef.current) {
+      } else if (!shouldKeepAwake && wakeLockRef.current) {
         try {
           await wakeLockRef.current.release();
           wakeLockRef.current = null;
@@ -80,7 +106,7 @@ const App: React.FC = () => {
 
     // Re-acquire lock if tab visibility changes (browser often releases lock on hide)
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && settings.isListening) {
+      if (document.visibilityState === 'visible' && shouldKeepAwake) {
         requestWakeLock();
       }
     };
@@ -92,11 +118,11 @@ const App: React.FC = () => {
         wakeLockRef.current.release().catch(() => {});
       }
     };
-  }, [settings.isListening]);
+  }, [settings.isListening, settings.isTimerActive]);
 
   // Cloud Sync: Merge cloud data with local data carefully
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isAuthReady) return;
     const fetchSettings = async () => {
       try {
         const userEmail = user.email.toLowerCase();
@@ -121,10 +147,10 @@ const App: React.FC = () => {
       }
     };
     fetchSettings();
-  }, [user?.email]);
+  }, [user?.email, isAuthReady]);
 
   useEffect(() => {
-    if (!user || !settings.contacts || settings.contacts.length === 0) return;
+    if (!user || !isAuthReady || !settings.contacts || settings.contacts.length === 0) return;
     let alertActive = false;
     let timerId: any = null;
 
@@ -152,9 +178,33 @@ const App: React.FC = () => {
           if (msgs.length > 0) {
             const latest = msgs.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
             const isFromOther = latest.senderEmail.toLowerCase() !== user.email.toLowerCase();
-            const isSOS = latest.type === 'location' || /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
-            if (isFromOther && isSOS && (Date.now() - latest.timestamp < 120000)) {
-              if (!alertActive) { alertActive = true; playAlert(); }
+            const timeDiff = Date.now() - latest.timestamp;
+
+            // Only process if it's a FRESH message (within last 15 seconds)
+            // and we haven't already processed this specific message ID
+            if (isFromOther && timeDiff < 15000 && !processedMessageIds.current.has(latest.id)) {
+              processedMessageIds.current.add(latest.id);
+
+              const isSOS = latest.type === 'location' || /\b(sos|help|emergency|location|pinpoint)\b/i.test(latest.text);
+              
+              // 1. SOS Audio Alert Logic
+              if (isSOS) {
+                if (!alertActive) { alertActive = true; playAlert(); }
+              }
+
+              // 2. Generic Browser Notification
+              if (Notification.permission === 'granted') {
+                try {
+                  const title = isSOS ? `🚨 SOS: ${latest.senderName}` : `Message from ${latest.senderName}`;
+                  new Notification(title, {
+                    body: latest.text,
+                    icon: 'https://cdn-icons-png.flaticon.com/512/1063/1063376.png',
+                    tag: latest.id // Prevent duplicate notifications at OS level
+                  });
+                } catch (e) {
+                  console.error("Notification failed", e);
+                }
+              }
             }
           }
         }
@@ -170,14 +220,14 @@ const App: React.FC = () => {
       window.removeEventListener('click', handleInteraction);
       window.removeEventListener('touchstart', handleInteraction);
     };
-  }, [user?.email, settings.contacts]);
+  }, [user?.email, settings.contacts, isAuthReady]);
 
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
     // Explicitly write to local storage immediately to prevent race conditions on reload
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
-    if (user) await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
+    if (user && isAuthReady) await setDoc(doc(db, "settings", user.email.toLowerCase()), updated, { merge: true });
   };
 
   useEffect(() => {
@@ -191,12 +241,22 @@ const App: React.FC = () => {
   }, [activeAlertId]);
 
   const handleLogout = () => {
-    auth.signOut().catch(() => {});
+    signOut(auth).catch(() => {});
     localStorage.clear();
+    localStorage.removeItem('isAuthenticated');
     setUser(null);
     setSettings(DEFAULT_SETTINGS);
     setAppView(AppView.DASHBOARD);
   };
+
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center space-y-4">
+        <Loader2 className="animate-spin text-blue-500" size={48} />
+        <p className="text-white text-xs font-bold uppercase tracking-widest animate-pulse">Establishing Secure Link...</p>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -204,6 +264,7 @@ const App: React.FC = () => {
         onLogin={(u: User) => { 
           setUser(u); 
           localStorage.setItem('guardian_user', JSON.stringify(u)); 
+          localStorage.setItem('isAuthenticated', 'true');
         }} 
       />
     );

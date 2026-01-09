@@ -3,24 +3,16 @@ import { SafeSpot } from '../types';
 
 export const GeminiService = {
   getNearbySafeSpots: async (lat: number, lng: number): Promise<SafeSpot[]> => {
-    // Generate a direct map search URL as a fallback
-    const fallbackSpot: SafeSpot = {
-      name: "Search Nearby Emergency Services",
-      uri: `https://www.google.com/maps/search/police+hospital+fire+station/@${lat},${lng},14z`,
-      distance: "Tap to Search",
-      category: "Emergency"
-    };
-
     if (!process.env.API_KEY) {
       console.warn("Gemini API Key missing");
-      return [fallbackSpot];
+      return [];
     }
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: "Find the 5 nearest emergency services (Police Station, Hospital, Fire Station) to this location. List them clearly.",
+        contents: "List the 5 nearest real-world emergency services (Police, Hospital, Fire) to the provided location. Use Google Maps to verify they exist. If none found, return nothing.",
         config: {
           tools: [{googleMaps: {}}],
           toolConfig: {
@@ -56,23 +48,17 @@ export const GeminiService = {
           spots.push({
             name: title,
             uri: mapData.uri,
-            distance: "Nearby", // Grounding metadata doesn't include calculated distance
+            distance: "Nearby", // Gemini 2.5 grounding often lacks precise distance output
             category: category
           });
         }
-      }
-
-      // If AI returns nothing, provide the manual fallback so user isn't stranded
-      if (spots.length === 0) {
-        return [fallbackSpot];
       }
 
       return spots.slice(0, 5);
 
     } catch (e) {
       console.error("Gemini Maps Grounding Error:", e);
-      // Return fallback on error so functionality remains
-      return [fallbackSpot];
+      return [];
     }
   }
 };
