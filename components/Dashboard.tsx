@@ -20,10 +20,15 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import GuardianService from '../services/GuardianService';
-import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
-import { auth, push, ref, rtdb, set } from '../services/firebase';
+import {
+  getPreciseCurrentPosition,
+  startLocationWatch,
+  stopLocationWatch,
+  uploadLiveLocation
+} from '../services/LocationServices';
+import { auth, ref, rtdb, set } from '../services/firebase';
 import { GeminiService } from '../services/geminiService';
-import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
+import { AlertLog, AppSettings, User as AppUser, GuardianCoords, SafeSpot } from '../types';
 
 interface DashboardProps {
   user: AppUser;
@@ -120,110 +125,73 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, []);
 
-  const triggerSOS = async (reason: string) => {
-    setErrorMsg("DISPATCHING SOS SIGNAL...");
-    
-    if (!auth.currentUser) {
-       setErrorMsg("⚠️ AUTH ERROR: SESSION EXPIRED. PLEASE RELOGIN.");
-       return;
+ const triggerSOS = async (reason: string) => {
+  setErrorMsg("DISPATCHING SOS SIGNAL...");
+
+  if (!auth.currentUser) {
+    setErrorMsg("⚠️ AUTH ERROR: SESSION EXPIRED. PLEASE RELOGIN.");
+    return;
+  }
+
+  try {
+    const coords = await getPreciseCurrentPosition();
+    setCoords(coords);
+    setLocationDenied(false);
+
+    await uploadLiveLocation(coords, true);
+
+    const timestamp = Date.now();
+    const log: AlertLog = {
+      id: `alert_${timestamp}`,
+      senderEmail: user.email,
+      senderName: user.name,
+      timestamp,
+      location: coords,
+      message: reason,
+      isLive: true,
+      recipients: settings.contacts?.map(c => c.email) || []
+    };
+
+    onAlert(log);
+    setErrorMsg(null);
+
+  } catch (err: any) {
+    console.error("SOS FAILED:", err);
+
+    if (err.message?.includes("Permission")) {
+      setErrorMsg("⚠️ LOCATION UPLOAD BLOCKED. PLEASE RELOGIN.");
+    } else if (err.message?.includes("Location")) {
+      setErrorMsg("⚠️ GPS ACCESS DENIED.");
+      setLocationDenied(true);
+    } else {
+      setErrorMsg(err.message || "⚠️ SOS FAILED");
     }
+  }
+};
 
-    const currentUser = userRef.current;
-    const currentSettings = settingsRef.current;
-    let loc: GuardianCoords | null = null;
-    let gpsErrorString: string | null = null;
-
-    try {
-      loc = await getPreciseCurrentPosition();
-      setCoords(loc);
-      setLocationDenied(false);
-    } catch (gpsErr: any) {
-      console.warn("SOS: GPS Failed", gpsErr);
-      gpsErrorString = gpsErr.message || "GPS Permission Denied";
-      if (gpsErr.code === 1) setLocationDenied(true);
-    }
-
-    try {
-      const guardians = currentSettings.contacts || [];
-      const timestamp = Date.now();
-      
-      const locationText = loc 
-        ? `[${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}]` 
-        : `[UNKNOWN LOCATION - ${gpsErrorString || "GPS Failed"}]`;
-      const alertMessage = `🚨 EMERGENCY ALERT: ${locationText} - ${reason} 🚨`;
-
-      const broadcastTasks = guardians.map((guardian: EmergencyContact) => {
-        const sorted = [currentUser.email.toLowerCase(), guardian.email.toLowerCase()].sort();
-        const sanitize = (e: string) => e.replace(/[\.\#\$\/\[\]]/g, '_');
-        const combinedId = `${sanitize(sorted[0])}__${sanitize(sorted[1])}`;
-        return push(ref(rtdb, `direct_chats/${combinedId}/updates`), {
-          id: `sos_${timestamp}_${guardian.id}`,
-          type: 'location',
-          senderName: currentUser.name,
-          senderEmail: currentUser.email.toLowerCase(),
-          text: alertMessage,
-          lat: loc?.lat || 0,
-          lng: loc?.lng || 0,
-          timestamp: timestamp
-        });
-      });
-      
-      await Promise.all(broadcastTasks);
-
-      const alertId = `alert_${timestamp}`;
-      const log: AlertLog = {
-        id: alertId, 
-        senderEmail: currentUser.email, 
-        senderName: currentUser.name,
-        timestamp: timestamp, 
-        location: loc, 
-        message: reason, 
-        isLive: true, 
-        recipients: guardians.map(c => c.email)
-      };
-
-      try {
-        await set(ref(rtdb, `users/${currentUser.id}/alerts/${alertId}`), log);
-      } catch (dbErr) {
-        console.warn("SOS logged locally only due to DB permission error.", dbErr);
-      }
-      
-      onAlert(log);
-      
-      if (!loc) setErrorMsg("⚠️ ALERT SENT WITHOUT GPS. CHECK PERMISSIONS.");
-      else setErrorMsg(null);
-
-    } catch (err: any) {
-      console.error("Critical SOS Failure:", err);
-      setErrorMsg("⚠️ ALERT FAILED: " + (err.message || "Unknown Error"));
-    }
-  };
 
   const triggerSOSRef = useRef(triggerSOS);
   useEffect(() => { triggerSOSRef.current = triggerSOS; });
 
-  useEffect(() => {
-    if (!timerTarget) {
-      setTimeLeftStr("");
-      localStorage.removeItem(TIMER_STORAGE_KEY);
-      if (settings.isTimerActive) updateSettings({ isTimerActive: false });
-      return;
-    }
-    if (!settings.isTimerActive) updateSettings({ isTimerActive: true });
-    localStorage.setItem(TIMER_STORAGE_KEY, timerTarget.toString());
-    const interval = setInterval(() => {
-      const diff = Math.ceil((timerTarget - Date.now()) / 1000);
-      if (diff <= 0) {
-        setTimerTarget(null);
-        triggerSOSRef.current("SAFETY TIMER EXPIRED - USER DID NOT CHECK IN");
-      } else {
-        const m = Math.floor(diff / 60);
-        const s = diff % 60;
-        setTimeLeftStr(`${m}:${s.toString().padStart(2, '0')}`);
+ useEffect(() => {
+  watchIdRef.current = startLocationWatch(
+    (c: GuardianCoords) => {
+      setCoords(c);
+      setLocationDenied(false);
+
+      if (auth.currentUser) {
+        uploadLiveLocation(c, isEmergency).catch(() => {});
       }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [timerTarget, settings.isTimerActive, updateSettings]);
+
+      findSafeSpots(c.lat, c.lng);
+    },
+    (err: string) => {
+      if (err.includes("Permission")) setLocationDenied(true);
+    }
+  );
+
+  return () => stopLocationWatch(watchIdRef.current);
+}, [externalActiveAlertId, user.id, isEmergency]);
 
   const startTimer = (minutes: number) => {
     if (minutes <= 0) return;
@@ -382,7 +350,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest italic group-hover:text-white transition-colors">Safety Timer</p>
           </button>
         )}
-        <button onClick={() => triggerSOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl active:scale-95 transition-transform hover:bg-red-900/30">
+        <button onClick={() => 
+        SOS("Manual Alert Trigger")} className="bg-red-950/20 border border-red-500/20 p-5 rounded-[2rem] cursor-pointer flex flex-col items-center shadow-xl active:scale-95 transition-transform hover:bg-red-900/30">
           <ShieldAlert size={18} className="text-red-500 mb-3" />
           <p className="text-[9px] font-bold text-red-500 uppercase tracking-widest italic">Instant Signal</p>
         </button>
