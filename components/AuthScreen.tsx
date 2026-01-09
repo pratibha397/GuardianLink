@@ -6,7 +6,6 @@ import {
   db,
   doc,
   getDoc,
-  isFirebaseConfigured,
   sendPasswordResetEmail,
   setDoc,
   signInWithEmailAndPassword,
