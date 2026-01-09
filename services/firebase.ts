@@ -46,7 +46,19 @@ const doc = (firestoreOrColl: any, ...args: string[]) => {
   }
   return firestoreOrColl.doc(args[0]);
 };
-const getDoc = (ref: any) => ref.get();
+
+// FIX: Wrap v8 snapshot (where .exists is a prop) to look like v9 snapshot (where .exists() is a function)
+const getDoc = async (ref: any) => {
+  const snap = await ref.get();
+  return {
+    exists: () => snap.exists, // Convert property to function
+    data: () => snap.data(),
+    id: snap.id,
+    ref: snap.ref,
+    metadata: snap.metadata
+  };
+};
+
 const setDoc = (ref: any, data: any, options?: any) => ref.set(data, options);
 const collection = (firestore: any, path: string) => firestore.collection(path);
 const addDoc = (coll: any, data: any) => coll.add(data);
