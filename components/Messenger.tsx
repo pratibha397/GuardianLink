@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { DataSnapshot, onValue, push, ref, rtdb } from '../services/firebase';
-import { getPreciseCurrentPosition } from '../services/LocationService';
+import { getPreciseCurrentPosition } from '../services/LocationServices';
 import { AppSettings, ChatMessage, EmergencyContact, GuardianCoords, User } from '../types';
 
 interface MessengerProps {
