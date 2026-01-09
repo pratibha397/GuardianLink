@@ -1,6 +1,5 @@
 
 import { getApp, getApps, initializeApp } from "firebase/app";
-import type { User as FirebaseUser } from "firebase/auth";
 import {
   createUserWithEmailAndPassword,
   getAuth,
@@ -11,7 +10,8 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
-  updateProfile
+  updateProfile,
+  User
 } from "firebase/auth";
 import {
   DataSnapshot,
@@ -37,6 +37,9 @@ import {
   updateDoc,
   where
 } from "firebase/firestore";
+
+// Define User type alias for export compatibility
+type FirebaseUser = User;
 
 const firebaseConfig = {
   apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY || "",

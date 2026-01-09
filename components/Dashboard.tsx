@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   Building2,
   CheckCircle2,
   ExternalLink,
@@ -10,6 +11,7 @@ import {
   MicOff,
   Navigation,
   Scan,
+  Search,
   Shield,
   ShieldAlert,
   Timer,
@@ -17,10 +19,13 @@ import {
   X
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import GuardianService from '../services/GuardianService';
-import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationServices';
-import { push, ref, rtdb, set } from '../services/firebase';
 import { AlertLog, AppSettings, User as AppUser, EmergencyContact, GuardianCoords, SafeSpot } from '../types';
+// Re-importing to ensure path resolution works
+import GuardianService from '../services/GuardianService';
+import { getPreciseCurrentPosition, startLocationWatch, stopLocationWatch } from '../services/LocationService';
+import { push, ref, rtdb, set } from '../services/firebase';
+import { GeminiService } from '../services/geminiService';
+
 interface DashboardProps {
   user: AppUser;
   settings: AppSettings;
@@ -227,7 +232,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  // Keep a ref to the trigger function so setInterval calls of latest version
+  // Keep a ref to the trigger function so setInterval calls the latest version
   const triggerSOSRef = useRef(triggerSOS);
   useEffect(() => {
     triggerSOSRef.current = triggerSOS;
@@ -476,10 +481,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
         <div className="space-y-3">
           {safeSpots.map((spot: SafeSpot, i: number) => (
-            <a key={i} href={spot.uri} target="_blank" rel="noreferrer" className="flex items-center justify-between p-4 bg-slate-950/60 border border-white/5 rounded-2xl">
+            <a key={i} href={spot.uri} target="_blank" rel="noreferrer" className="flex items-center justify-between p-4 bg-slate-950/60 border border-white/5 rounded-2xl hover:bg-slate-900 transition-colors">
               <div className="flex items-center gap-3">
-                 <div className="w-10 h-10 bg-blue-600/10 rounded-xl flex items-center justify-center text-blue-500">
-                    {spot.category === 'Police' ? <Building2 size={16}/> : spot.category === 'Fire Department' ? <Flame size={16}/> : <Hospital size={16}/>}
+                 <div className="w-10 h-10 bg-blue-600/10 rounded-xl flex items-center justify-center text-blue-500 shrink-0">
+                    {spot.category === 'Police' ? <Building2 size={16}/> : spot.category === 'Fire Department' ? <Flame size={16}/> : spot.category === 'Hospital' ? <Hospital size={16}/> : <Search size={16}/>}
                  </div>
                  <div className="text-[11px] font-bold text-slate-200 uppercase italic truncate max-w-[150px]">{spot.name}</div>
               </div>
@@ -498,13 +503,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                  </div>
                ) : (
                  <p className="text-[9px] text-slate-700 uppercase font-black italic">
-                   {coords ? 'Locating rescue infrastructure...' : 'Waiting for location signal...'}
+                   {isSearching ? 'Scanning neural network...' : coords ? 'No specific locations detected.' : 'Waiting for location signal...'}
                  </p>
                )}
             </div>
           )}
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="relative p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[10px] font-black text-amber-500 uppercase tracking-widest text-center animate-pulse flex items-center justify-center gap-2 group">
+           <AlertCircle size={14} className="shrink-0" /> <span className="max-w-[80%]">{errorMsg}</span>
+           <button onClick={() => setErrorMsg(null)} className="absolute right-4 p-1 hover:text-white transition-colors"><X size={12} /></button>
+        </div>
+      )}
     </div>
   );
 };
