@@ -1,4 +1,3 @@
-
 import { GuardianCoords } from '../types';
 
 const STORAGE_KEY = 'guardian_last_known_loc';
@@ -63,10 +62,10 @@ export function startLocationWatch(
       onUpdate(coords);
     },
     (error) => {
+      // Only warn, do not spam alerts.
       console.warn("GPS Watch Error:", error.message);
-      if (error.code === 1) onError("Location Permission Denied");
-      else if (error.code === 2) onError("Location Unavailable");
-      else if (error.code === 3) onError("GPS Signal Weak");
+      if (error.code === 1) onError("Permission Denied");
+      else onError(error.message);
     },
     { 
       enableHighAccuracy: true, 
@@ -79,6 +78,7 @@ export function startLocationWatch(
 /**
  * Robust SOS Coordinate Resolver.
  * STRATEGY: Race High Accuracy vs Time. Fallback to Low Accuracy, then Cache.
+ * Throws explicit errors so UI can handle them or fall back to null.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
   // 1. If we have a very recent location (fresh within 10s), just use it.
@@ -105,6 +105,14 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
     const handleError = (primaryError: GeolocationPositionError) => {
       if (isResolved) return;
       
+      // If PERMISSION DENIED, fail fast. Do not fallback.
+      if (primaryError.code === 1) {
+        isResolved = true;
+        // Re-throw with original code/message structure for Dashboard to catch
+        reject(primaryError); 
+        return;
+      }
+
       // Primary High-Accuracy request failed. 
       // Fallback Strategy: Try Low Accuracy (Cell/Wifi) which is faster and more reliable indoors.
       console.warn("High Accuracy GPS timed out/failed. Switching to Network Location.");
@@ -115,6 +123,11 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
           if (isResolved) return;
           isResolved = true;
           
+          if (secondaryError.code === 1) {
+             reject(secondaryError);
+             return;
+          }
+
           // Final Safety Net: If both failed, return the last known cache if it exists (better than nothing for SOS)
           if (lastCapturedCoords) {
             console.warn("All location methods failed. Returning last known cache.");
