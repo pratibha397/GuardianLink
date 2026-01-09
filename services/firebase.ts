@@ -1,19 +1,41 @@
 
 import { getApp, getApps, initializeApp } from "firebase/app";
-import * as firebaseAuth from "firebase/auth";
+import type { User as FirebaseUser } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile
+} from "firebase/auth";
 import {
   DataSnapshot,
   getDatabase,
   onValue,
   push,
   ref,
-  set
+  remove,
+  set,
+  update
 } from "firebase/database";
 import {
+  addDoc,
+  collection,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
-  setDoc
+  onSnapshot,
+  query,
+  setDoc,
+  Timestamp,
+  updateDoc,
+  where
 } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -29,27 +51,22 @@ const firebaseConfig = {
 // Singleton initialization pattern for v9+
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Destructure from namespace import to avoid named export resolution issues
-const { 
-  getAuth, 
-  signInAnonymously, 
-  signOut, 
-  onAuthStateChanged, 
-  sendPasswordResetEmail 
-} = firebaseAuth;
-
 // Initialize services
 const auth = getAuth(app);
 const db = getFirestore(app);
 const rtdb = getDatabase(app);
 
-// Export instances and modular functions
+// Export instances and all commonly used modular functions
 export {
-  app,
-  auth,
-  db, doc,
-  getDoc, onAuthStateChanged, onValue, push, ref, rtdb, sendPasswordResetEmail, set, setDoc, signInAnonymously,
-  signOut
+  addDoc, app,
+  auth, collection, createUserWithEmailAndPassword, DataSnapshot, db,
+  // Firestore
+  doc,
+  getDoc, getDocs, GoogleAuthProvider, onAuthStateChanged, onSnapshot, onValue, push, query,
+  // Realtime Database
+  ref, remove, rtdb, sendPasswordResetEmail, set, setDoc,
+  // Auth
+  signInAnonymously, signInWithEmailAndPassword, signInWithPopup, signOut, Timestamp, update, updateDoc, updateProfile, where
 };
-export type { DataSnapshot };
+export type { FirebaseUser };
 
