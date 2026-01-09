@@ -229,7 +229,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  // Keep a ref to the trigger function so setInterval calls the latest version
+  // Keep a ref to the trigger function so setInterval calls of latest version
   const triggerSOSRef = useRef(triggerSOS);
   useEffect(() => {
     triggerSOSRef.current = triggerSOS;
@@ -507,7 +507,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           )}
         </div>
       </div>
-
     </div>
   );
 };
