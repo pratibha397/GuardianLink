@@ -1,4 +1,3 @@
-
 import { AlertLog, AppSettings, User as AppUser, ChatMessage } from '../types';
 import { getPreciseCurrentPosition } from './LocationServices';
 import { push, ref, rtdb, set } from './firebase';

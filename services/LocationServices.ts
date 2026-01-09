@@ -1,4 +1,3 @@
-
 import { GuardianCoords } from '../types';
 
 const STORAGE_KEY = 'guardian_last_known_loc';
@@ -63,10 +62,10 @@ export function startLocationWatch(
       onUpdate(coords);
     },
     (error) => {
+      // Only warn, do not spam alerts.
       console.warn("GPS Watch Error:", error.message);
-      if (error.code === 1) onError("Location Permission Denied");
-      else if (error.code === 2) onError("Location Unavailable");
-      else if (error.code === 3) onError("GPS Signal Weak");
+      if (error.code === 1) onError("Permission Denied");
+      else onError(error.message);
     },
     { 
       enableHighAccuracy: true, 
@@ -79,10 +78,12 @@ export function startLocationWatch(
 /**
  * Robust SOS Coordinate Resolver.
  * STRATEGY: Race High Accuracy vs Time. Fallback to Low Accuracy, then Cache.
+ * Throws explicit errors so UI can handle them or fall back to null.
  */
 export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
-  // 1. If we have a very recent location (fresh within 10s), just use it.
-  if (lastCapturedCoords && (Date.now() - lastCapturedCoords.timestamp < 10000)) {
+  // 1. If we have a very recent location (fresh within 20s), just use it.
+  // Increased from 10s to 20s to reduce hardware calls during chat sessions.
+  if (lastCapturedCoords && (Date.now() - lastCapturedCoords.timestamp < 20000)) {
     return lastCapturedCoords;
   }
 
@@ -105,6 +106,13 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
     const handleError = (primaryError: GeolocationPositionError) => {
       if (isResolved) return;
       
+      // If PERMISSION DENIED, fail fast. Do not fallback.
+      if (primaryError.code === 1) {
+        isResolved = true;
+        reject(new Error("Location Permission Denied. Please enable it in browser settings.")); 
+        return;
+      }
+
       // Primary High-Accuracy request failed. 
       // Fallback Strategy: Try Low Accuracy (Cell/Wifi) which is faster and more reliable indoors.
       console.warn("High Accuracy GPS timed out/failed. Switching to Network Location.");
@@ -115,12 +123,20 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
           if (isResolved) return;
           isResolved = true;
           
+          if (secondaryError.code === 1) {
+             reject(new Error("Location Permission Denied."));
+             return;
+          }
+
           // Final Safety Net: If both failed, return the last known cache if it exists (better than nothing for SOS)
           if (lastCapturedCoords) {
             console.warn("All location methods failed. Returning last known cache.");
             resolve(lastCapturedCoords);
           } else {
-            const msg = secondaryError.code === 1 ? "Permission Denied" : "Location Signal Lost";
+            // Provide a clear error message
+            let msg = "Location Signal Lost (Timeout).";
+            if (secondaryError.code === 2) msg = "Position Unavailable (Check GPS).";
+            if (secondaryError.code === 3) msg = "GPS Timeout (Move outside).";
             reject(new Error(msg));
           }
         },
@@ -132,14 +148,14 @@ export async function getPreciseCurrentPosition(): Promise<GuardianCoords> {
       );
     };
 
-    // Step 1: Try High Accuracy with a short timeout (5s)
-    // We want speed. If GPS doesn't lock in 5s, we degrade to Wifi/Cell.
+    // Step 1: Try High Accuracy with a reasonable timeout
+    // Increased to 10000ms (10s) because 5s is often too short for cold GPS lock indoors.
     navigator.geolocation.getCurrentPosition(
       handleSuccess,
       handleError,
       { 
         enableHighAccuracy: true, 
-        timeout: 5000, 
+        timeout: 10000, 
         maximumAge: 5000 
       }
     );

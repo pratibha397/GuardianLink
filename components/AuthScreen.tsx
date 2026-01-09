@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, Shield, User as UserIcon } from 'lucide-react';
+import { AlertCircle, ArrowRight, Eye, EyeOff, Lock, Mail, RefreshCw, Shield, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
 import {
   auth,
@@ -6,11 +6,8 @@ import {
   db,
   doc,
   getDoc,
-  isFirebaseConfigured,
-  sendPasswordResetEmail,
   setDoc,
-  signInWithEmailAndPassword,
-  updateProfile
+  signInWithEmailAndPassword
 } from '../services/firebase';
 import { User } from '../types';
 
@@ -18,223 +15,195 @@ interface AuthScreenProps {
   onLogin: (user: User) => void;
 }
 
+type AuthMode = 'LOGIN' | 'REGISTER';
+
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
-  const [view, setView] = useState<'login' | 'register' | 'forgot'>('login');
+  const [mode, setMode] = useState<AuthMode>('LOGIN');
+  
+  // Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  
+  // UI State
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
-
-  const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
-
-  const syncUserProfile = async (uid: string, email: string, displayName: string) => {
-    try {
-      await setDoc(doc(db, "users", email.toLowerCase()), {
-        uid,
-        email: email.toLowerCase(),
-        name: displayName,
-        lastActive: Date.now()
-      }, { merge: true });
-    } catch (e) {
-      console.error("Discovery sync failed", e);
-    }
-  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setSuccessMsg(null);
-
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (!isValidEmail(cleanEmail)) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-
-    if (view !== 'forgot' && password.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
-
     setLoading(true);
 
-    if (!isFirebaseConfigured) {
-      setTimeout(() => {
-        onLogin({
-          id: 'demo_user',
-          email: cleanEmail,
-          name: name.trim() || 'Guest User'
-        });
-        setLoading(false);
-      }, 800);
-      return;
-    }
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
 
     try {
-      if (view === 'forgot') {
-        await sendPasswordResetEmail(auth, cleanEmail);
-        setSuccessMsg("Reset link sent! Please check your inbox.");
-        setView('login');
-        setLoading(false);
-        return;
-      }
+      if (mode === 'REGISTER') {
+        // --- REGISTRATION FLOW ---
+        if (cleanName.length < 2) throw new Error("Please enter your full name.");
+        if (password.length < 6) throw new Error("Password must be at least 6 characters.");
 
-      if (view === 'register') {
-        if (!name.trim()) throw new Error("A name is required for registration.");
-        const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-        await updateProfile(credential.user, { displayName: name.trim() });
-        await syncUserProfile(credential.user.uid, cleanEmail, name.trim());
+        const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        const firebaseUser = userCredential.user;
+        if (!firebaseUser) throw new Error("Registration failed.");
 
-        onLogin({
-          id: credential.user.uid,
+        const newUser: User = {
+          id: firebaseUser.uid,
           email: cleanEmail,
-          name: name.trim()
-        });
-      } else {
-        const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        let finalName = credential.user.displayName || 'User';
+          name: cleanName
+        };
 
-        const userSnap = await getDoc(doc(db, "users", cleanEmail));
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
-          if (userData && userData.name) {
-            finalName = userData.name;
+        // Try to write to Firestore, but don't block login if it fails (Permission/Rules issue)
+        try {
+          await setDoc(doc(db, "users", firebaseUser.uid), newUser);
+        } catch (dbErr: any) {
+          console.warn("Firestore write failed (likely permission rules). Proceeding with local session.", dbErr);
+        }
+        
+        onLogin(newUser);
+
+      } else {
+        // --- LOGIN FLOW ---
+        const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        const firebaseUser = userCredential.user;
+        if (!firebaseUser) throw new Error("Authentication failed.");
+
+        let userData: User = {
+          id: firebaseUser.uid,
+          email: cleanEmail,
+          name: firebaseUser.displayName || "Guardian User"
+        };
+
+        // Try to fetch profile, if fails or empty, use fallback
+        try {
+          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (userDoc.exists()) {
+            userData = userDoc.data() as User;
+          } else {
+             // Create missing doc if possible
+             try { await setDoc(doc(db, "users", firebaseUser.uid), userData); } catch {}
           }
+        } catch (dbErr) {
+          console.warn("Firestore read failed. Using local auth data.", dbErr);
+          // Fallback is already set in userData
         }
 
-        await syncUserProfile(credential.user.uid, cleanEmail, finalName);
-
-        onLogin({ 
-          id: credential.user.uid, 
-          email: cleanEmail,
-          name: finalName
-        });
+        onLogin(userData);
       }
+
     } catch (err: any) {
       console.error("Auth Error:", err);
-      let message = "An error occurred during authentication.";
-      switch (err.code) {
-        case 'auth/email-already-in-use': message = "This email is already registered."; break;
-        case 'auth/invalid-credential':
-        case 'auth/wrong-password': message = "Incorrect email or password."; break;
-        case 'auth/user-not-found': message = "No account exists with this email."; break;
-        default: message = err.message || "Sign in failed.";
+      let msg = err.message?.replace('Firebase: ', '') || "An unknown error occurred.";
+      if (msg.includes("permission")) msg = "Database permission error. Please contact support.";
+      // For generic auth errors (wrong password), show them.
+      // For login, we typically only show blocking errors.
+      if (mode === 'LOGIN' && (err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential')) {
+         setError("Invalid email or password.");
+      } else if (err.code === 'auth/email-already-in-use') {
+         setError("Email already registered. Please login.");
+      } else {
+         setError(msg);
       }
-      setError(message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6 sm:p-12">
-      <div className="w-full max-w-[400px] space-y-8 animate-in fade-in zoom-in duration-500">
-        <div className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-600 rounded-3xl shadow-[0_20px_40px_rgba(37,99,235,0.3)] border-b-4 border-blue-800">
-            <Shield size={40} className="text-white fill-blue-400/20" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-3xl font-extrabold text-white tracking-tight">GuardianLink</h1>
-            <p className="text-sm font-medium text-slate-500 italic">Safety & Security simplified.</p>
-          </div>
+    <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-600/5 rounded-full blur-[120px] pointer-events-none" />
+      
+      <div className="relative z-10 flex flex-col items-center mb-10 animate-in fade-in slide-in-from-top-5 duration-700">
+        <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-blue-700 rounded-[2rem] shadow-[0_20px_60px_-10px_rgba(37,99,235,0.5)] flex items-center justify-center mb-6 transform hover:scale-105 transition-transform duration-500 border border-white/10">
+          <Shield size={48} className="text-white drop-shadow-md" />
         </div>
+        <h1 className="text-4xl font-extrabold text-white tracking-tight mb-2">GuardianLink</h1>
+        <p className="text-slate-400 font-medium italic tracking-wide text-sm">Safety & Security simplified.</p>
+      </div>
 
-        <div className="bg-slate-900/40 p-8 rounded-[2.5rem] border border-white/5 backdrop-blur-3xl shadow-2xl relative overflow-hidden">
-          {view !== 'forgot' && (
-            <div className="flex bg-slate-950/80 p-1.5 rounded-2xl border border-white/5 mb-8">
-              <button 
-                type="button" 
-                onClick={() => { setView('login'); setError(null); }} 
-                className={`flex-1 py-3 text-xs font-bold uppercase rounded-xl transition-all duration-300 ${view === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}
-              >
-                Login
-              </button>
-              <button 
-                type="button" 
-                onClick={() => { setView('register'); setError(null); }} 
-                className={`flex-1 py-3 text-xs font-bold uppercase rounded-xl transition-all duration-300 ${view === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}
-              >
-                Register
-              </button>
-            </div>
-          )}
+      <div className="w-full max-w-[400px] relative z-10 animate-in fade-in slide-in-from-bottom-5 duration-700 delay-150">
+        <div className="glass bg-[#0f172a]/60 backdrop-blur-xl rounded-[2.5rem] p-2 border border-white/5 shadow-2xl">
+          
+          <div className="flex bg-[#020617]/50 rounded-[2rem] p-1.5 mb-8 relative">
+            <button 
+              onClick={() => { setMode('LOGIN'); setError(null); }}
+              className={`flex-1 py-4 rounded-[1.7rem] text-xs font-black uppercase tracking-widest transition-all duration-300 relative z-10 ${mode === 'LOGIN' ? 'text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Login
+            </button>
+            <button 
+              onClick={() => { setMode('REGISTER'); setError(null); }}
+              className={`flex-1 py-4 rounded-[1.7rem] text-xs font-black uppercase tracking-widest transition-all duration-300 relative z-10 ${mode === 'REGISTER' ? 'text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Register
+            </button>
+            <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-blue-600 rounded-[1.7rem] transition-all duration-300 ease-out shadow-lg shadow-blue-600/20 ${mode === 'REGISTER' ? 'translate-x-full left-0' : 'left-1.5'}`} />
+          </div>
 
-          <form onSubmit={handleAuth} className="space-y-5">
-            {view === 'forgot' && (
-              <button 
-                type="button" 
-                onClick={() => setView('login')}
-                className="flex items-center gap-2 text-blue-500 text-xs font-bold mb-6 hover:text-blue-400 transition-colors"
-              >
-                <ArrowLeft size={14} /> Back to Login
-              </button>
-            )}
-
-            <div className="space-y-4">
-              {view === 'register' && (
+          <form onSubmit={handleAuth} className="px-6 pb-6 space-y-5">
+            {mode === 'REGISTER' && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-right duration-300">
                 <div className="relative group">
-                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
+                  <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors">
+                    <UserIcon size={18} />
+                  </div>
                   <input 
-                    type="text" required placeholder="Full Name" value={name} 
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} 
-                    className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
+                    type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-[#020617] border border-white/5 rounded-2xl py-4 pl-12 pr-5 text-sm font-bold text-white placeholder:text-slate-600 outline-none focus:border-blue-500/50 transition-all focus:bg-[#020617]/80"
+                    required
                   />
                 </div>
-              )}
-
-              <div className="relative group">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
-                <input 
-                  type="email" required placeholder="Email Address" value={email} 
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)} 
-                  className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
-                />
               </div>
+            )}
 
-              {view !== 'forgot' && (
-                <div className="relative group">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
-                  <input 
-                    type={showPassword ? "text" : "password"} required placeholder="Password" value={password} 
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)} 
-                    className="w-full bg-slate-950 border border-white/10 rounded-2xl py-4 pl-12 pr-12 text-sm text-white font-medium outline-none focus:border-blue-500 transition-all" 
-                  />
-                  <button 
-                    type="button" onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 hover:text-blue-500 transition-colors"
-                  >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-              )}
+            <div className="relative group">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors">
+                <Mail size={18} />
+              </div>
+              <input 
+                type="email" placeholder="Email Address" value={email} onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-[#020617] border border-white/5 rounded-2xl py-4 pl-12 pr-5 text-sm font-bold text-white placeholder:text-slate-600 outline-none focus:border-blue-500/50 transition-all focus:bg-[#020617]/80"
+                required
+              />
             </div>
 
-            {error && (
-              <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 p-4 rounded-2xl animate-in slide-in-from-top-1">
-                <AlertCircle size={16} className="text-red-500 shrink-0" />
-                <p className="text-[11px] font-bold text-red-400 uppercase tracking-tight">{error}</p>
+            <div className="relative group">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors">
+                <Lock size={18} />
               </div>
-            )}
-
-            {successMsg && (
-              <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/20 p-4 rounded-2xl animate-in slide-in-from-top-1">
-                <CheckCircle2 size={16} className="text-green-500 shrink-0" />
-                <p className="text-[11px] font-bold text-green-400 uppercase tracking-tight">{successMsg}</p>
-              </div>
-            )}
+              <input 
+                type={showPassword ? "text" : "password"} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-[#020617] border border-white/5 rounded-2xl py-4 pl-12 pr-12 text-sm font-bold text-white placeholder:text-slate-600 outline-none focus:border-blue-500/50 transition-all focus:bg-[#020617]/80"
+                required
+              />
+              <button 
+                type="button" onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
 
             <button 
-              type="submit" disabled={loading} 
-              className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all disabled:opacity-50"
+              type="submit" disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black uppercase text-xs tracking-[0.2em] py-5 rounded-2xl shadow-[0_10px_40px_-10px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-70 disabled:cursor-not-allowed mt-4 flex items-center justify-center gap-2 group"
             >
-              {loading ? "Processing..." : (view === 'register' ? "Register Account" : (view === 'login' ? "Login" : "Reset Password"))}
+              {loading ? <RefreshCw className="animate-spin" size={16} /> : <>{mode === 'LOGIN' ? 'Login' : 'Register'} <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" /></>}
             </button>
           </form>
         </div>
+
+        {error && (
+          <div className="mt-6 mx-4 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 animate-in slide-in-from-top-2">
+            <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
+            <p className="text-xs font-bold text-red-400 leading-relaxed">{error}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="absolute bottom-6 text-center">
+         <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">Secured by Aegis Mesh Protocol</p>
       </div>
     </div>
   );

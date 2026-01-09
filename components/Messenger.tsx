@@ -1,8 +1,6 @@
-
 import {
   ArrowLeft,
-  ExternalLink,
-  MapPin,
+  ExternalLink, MapPin,
   MessageCircle,
   MessageSquare,
   MoreVertical,
@@ -14,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { DataSnapshot, onValue, push, ref, rtdb } from '../services/firebase';
-import { getPreciseCurrentPosition } from '../services/LocationServices';
+import { getPreciseCurrentPosition } from '../services/LocationService';
 import { AppSettings, ChatMessage, EmergencyContact, GuardianCoords, User } from '../types';
 
 interface MessengerProps {
@@ -124,9 +122,11 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
       };
 
       await push(ref(rtdb, `${path}/updates`), locationMsg);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Manual location dispatch failed:", err);
-      alert("Failed to acquire GPS lock. Please check permissions.");
+      // Display specific error to user (Permission vs Timeout vs Hardware)
+      const errorMsg = err.message || "Unknown GPS Error";
+      alert(`Failed to share location: ${errorMsg}`);
     } finally {
       setIsLocating(false);
     }
@@ -289,7 +289,7 @@ const Messenger: React.FC<MessengerProps> = ({ user, settings, activeAlertId }) 
         <form onSubmit={sendMessage} className="flex gap-3 items-center">
           <div className="flex-1 relative">
             <input 
-              type="text" value={text} onChange={(e) => setText(e.target.value)}
+              type="text" value={text} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setText(e.target.value)}
               placeholder="Message Guardian..." 
               className="w-full bg-slate-900 border border-white/10 rounded-3xl px-6 py-4 text-sm text-white outline-none focus:border-blue-500 shadow-inner placeholder:text-slate-700"
             />
