@@ -2,7 +2,6 @@ import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, Shield, 
 import { useState } from 'react';
 import {
   auth,
-  createUserWithEmailAndPassword,
   db,
   doc,
   getDoc,
